@@ -1,0 +1,7 @@
+{
+  "$id": "https://outskirts.local/schema/SchemaRef.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "string",
+  "minLength": 1,
+  "description": "Name of a schema in @outskirts/schemas, e.g. \"ExtractionResult\""
+}

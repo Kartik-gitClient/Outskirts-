@@ -1,0 +1,33 @@
+{
+  "$id": "https://outskirts.local/schema/ToolSpec.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Offered to the planner; write it for a model to read"
+    },
+    "inputSchemaRef": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Name of a schema in @outskirts/schemas, e.g. \"ExtractionResult\""
+    },
+    "outputSchemaRef": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Name of a schema in @outskirts/schemas, e.g. \"ExtractionResult\""
+    }
+  },
+  "required": [
+    "name",
+    "description",
+    "inputSchemaRef",
+    "outputSchemaRef"
+  ],
+  "additionalProperties": false
+}

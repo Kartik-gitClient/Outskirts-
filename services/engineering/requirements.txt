@@ -1,0 +1,9 @@
+fastapi>=0.115.0
+uvicorn>=0.32.0
+pydantic>=2.10.0
+fluids>=1.0.26
+CoolProp>=6.6.0
+Pint>=0.24.4
+sympy>=1.13.3
+scipy>=1.14.1
+numpy>=2.1.0

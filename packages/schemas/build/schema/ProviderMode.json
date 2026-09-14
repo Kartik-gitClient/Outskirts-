@@ -1,0 +1,10 @@
+{
+  "$id": "https://outskirts.local/schema/ProviderMode.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "string",
+  "enum": [
+    "SOVEREIGN",
+    "ASSIST"
+  ],
+  "description": "SOVEREIGN refuses every outside-perimeter provider. Default in code."
+}

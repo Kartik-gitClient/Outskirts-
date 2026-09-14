@@ -1,0 +1,150 @@
+{
+  "$id": "https://outskirts.local/schema/PalAuditEvent.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque identifier, unique within its collection"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "description": "Monotonic sequence number, per task"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+      "description": "ISO 8601 timestamp, UTC"
+    },
+    "taskId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque identifier, unique within its collection"
+    },
+    "stepId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque identifier, unique within its collection"
+    },
+    "providerId": {
+      "type": "string",
+      "enum": [
+        "vllm",
+        "ollama",
+        "nim",
+        "nim-selfhosted",
+        "triton"
+      ]
+    },
+    "locality": {
+      "type": "string",
+      "enum": [
+        "in-process",
+        "loopback",
+        "lan",
+        "internet"
+      ],
+      "description": "Network distance of the endpoint that served the call"
+    },
+    "trustBoundary": {
+      "type": "string",
+      "enum": [
+        "inside-perimeter",
+        "outside-perimeter"
+      ],
+      "description": "Whether the endpoint sits inside the organisation perimeter"
+    },
+    "endpointHost": {
+      "type": "string",
+      "description": "Resolved host, so nobody has to trust the label"
+    },
+    "model": {
+      "type": "string"
+    },
+    "modelDigest": {
+      "type": "string"
+    },
+    "quantisation": {
+      "type": "string"
+    },
+    "contextWindow": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "promptTemplateHash": {
+      "type": "string"
+    },
+    "seed": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "cacheHit": {
+      "default": false,
+      "type": "boolean"
+    },
+    "tokensIn": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "tokensOut": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "latencyMs": {
+      "type": "number",
+      "minimum": 0
+    },
+    "loadMs": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Model load, separated from inference"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "error",
+        "fallback",
+        "refused-locality"
+      ]
+    }
+  },
+  "required": [
+    "eventId",
+    "seq",
+    "ts",
+    "taskId",
+    "stepId",
+    "providerId",
+    "locality",
+    "trustBoundary",
+    "endpointHost",
+    "model",
+    "modelDigest",
+    "quantisation",
+    "contextWindow",
+    "promptTemplateHash",
+    "seed",
+    "tokensIn",
+    "tokensOut",
+    "latencyMs",
+    "loadMs",
+    "status"
+  ],
+  "additionalProperties": false
+}

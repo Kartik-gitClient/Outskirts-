@@ -1,0 +1,104 @@
+# Outskirts service topology.
+#
+# Sovereignty is enforced here, not by monitoring. `backplane` is declared
+# `internal: true`, which means Docker installs no gateway route for it: a
+# container attached only to this network has no path to the internet, whether
+# or not any application-level guard is working correctly.
+#
+# That is the whole point. The application-plane guard tells you what the system
+# *believes* it did; the topology decides what it *can* do. When those two
+# disagree, only one of them is load-bearing.
+#
+# Verify with:  ./deploy/verify-egress.sh
+#
+# Note: `docker compose` is required and is not yet installed on the build
+# machines. Until it is, the egress claim is designed but unproven -- and an
+# unproven sovereignty claim is exactly what this project exists not to ship.
+
+name: outskirts
+
+networks:
+  backplane:
+    driver: bridge
+    internal: true # <- the sovereignty boundary
+
+volumes:
+  mongo-data:
+  qdrant-data:
+  model-cache:
+
+services:
+  # --- storage ------------------------------------------------------------
+
+  mongo:
+    image: mongo:8
+    networks: [backplane]
+    volumes:
+      - mongo-data:/data/db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-outskirts}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?set MONGO_PASSWORD}
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', 'db.adminCommand("ping")']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    networks: [backplane]
+    volumes:
+      - qdrant-data:/qdrant/storage
+    environment:
+      # Qdrant's own docs warn that the default container starts with no auth
+      # and listens on all interfaces. Contained by `internal: true`, but an
+      # unauthenticated store is still an unauthenticated store.
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:?set QDRANT_API_KEY}
+    healthcheck:
+      test: ['CMD-SHELL', 'exit 0'] # qdrant image ships no shell tools; see verify-egress.sh
+      interval: 30s
+
+  # --- embeddings and reranking ------------------------------------------
+
+  tei:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
+    networks: [backplane]
+    volumes:
+      # Weights are staged offline and mounted. HF_HUB_OFFLINE makes an
+      # accidental download attempt fail loudly instead of silently reaching
+      # for the network on a machine that is supposed to have none.
+      - model-cache:/data
+    environment:
+      HF_HUB_OFFLINE: '1'
+      TRANSFORMERS_OFFLINE: '1'
+    command: ['--model-id', '/data/bge-m3', '--port', '80']
+
+  # --- capability plane ---------------------------------------------------
+  # Python services. Each is a plugin by the manifest model: signed image,
+  # declared contract, no egress. `service` runtime rather than `wasm`.
+
+  perception:
+    build: ../services/perception
+    networks: [backplane]
+    volumes:
+      - model-cache:/models:ro
+    environment:
+      HF_HUB_OFFLINE: '1'
+      OUTSKIRTS_SCHEMA_DIR: /schema
+    profiles: [full] # Implemented: P1/P5 perception capability service (P&ID perception + GraphRAG)
+
+  engineering:
+    build: ../services/engineering
+    networks: [backplane]
+    environment:
+      OUTSKIRTS_SCHEMA_DIR: /schema
+    profiles: [full] # Implemented: P2/P5 sovereign engineering container (fluids, CoolProp, Pint, SymPy)
+
+  # --- probe --------------------------------------------------------------
+  # Used by verify-egress.sh. Deliberately has curl, unlike the real services.
+
+  egress-probe:
+    image: curlimages/curl:latest
+    networks: [backplane]
+    profiles: [probe]
+    entrypoint: ['sleep', 'infinity']

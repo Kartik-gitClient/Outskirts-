@@ -1,0 +1,243 @@
+{
+  "generator": "packages/schemas/scripts/generate.ts",
+  "target": "draft-7",
+  "io": "input",
+  "count": 47,
+  "schemas": [
+    {
+      "name": "AuditEvent",
+      "file": "AuditEvent.json",
+      "sha256": "a24d853e7484f02ecbf94f72a3c52d6c4aebc67e83862e2209a64dae5e85f75c"
+    },
+    {
+      "name": "BBox",
+      "file": "BBox.json",
+      "sha256": "ce20d068a5ce93ce64db729a674a92fe55c4f8d2017012d8d797293a87161c66"
+    },
+    {
+      "name": "CalcResult",
+      "file": "CalcResult.json",
+      "sha256": "43d37c4a98e6045378714bad8f99735e8572b48b68f6fa2e7c20621095ae6b3e"
+    },
+    {
+      "name": "CalcStep",
+      "file": "CalcStep.json",
+      "sha256": "0c1c5b31b794355ab845d8e123d4a72793eea3a80dee55297dc4bbf4aae6555b"
+    },
+    {
+      "name": "ChainAnchor",
+      "file": "ChainAnchor.json",
+      "sha256": "ccd499f03ba63bb0ad48ed4f7d2ad7509c22619583d09327d645b3a5df9f1d92"
+    },
+    {
+      "name": "ChainVerifyResult",
+      "file": "ChainVerifyResult.json",
+      "sha256": "db9e36affe8a6a570ad3cb60926a91e25684b2508a4c872e147aca95ef4378ba"
+    },
+    {
+      "name": "ChatMessage",
+      "file": "ChatMessage.json",
+      "sha256": "ac62f50c6a057376cd6eefb5b11eaa373795bc7368a3eacc0935a99200976c5d"
+    },
+    {
+      "name": "ChatRequest",
+      "file": "ChatRequest.json",
+      "sha256": "d1d49e4b04c367865d14f08b02f74b0076914239f917b3261e0c7915de67e9a0"
+    },
+    {
+      "name": "Chunk",
+      "file": "Chunk.json",
+      "sha256": "8026858e426e12bceea4473d56f12bb75153cfe1ae3b33d055b34e7c9b0b9d08"
+    },
+    {
+      "name": "Citation",
+      "file": "Citation.json",
+      "sha256": "7cdc05458e27a02510419c1bff1de0bb6045c0f6ed8c97881bb74d2a908fcd02"
+    },
+    {
+      "name": "ClaimVerdict",
+      "file": "ClaimVerdict.json",
+      "sha256": "14cf657ba4cb5e726190714d4e5746a97eed3792c542ea9b9769b13496c0e90e"
+    },
+    {
+      "name": "CriticCheck",
+      "file": "CriticCheck.json",
+      "sha256": "69a56313e66798c65fe060481c4b2132d584efa74350690e53cb79856efb0914"
+    },
+    {
+      "name": "CriticVerdict",
+      "file": "CriticVerdict.json",
+      "sha256": "dc73ed3276e2a2d19bbe7dc6179aa28fe8e86fa1b348c039175f27df11c2ab3e"
+    },
+    {
+      "name": "DecisionDna",
+      "file": "DecisionDna.json",
+      "sha256": "42a3a9c6c97b7586a23d219379ce62eb7b9115503f74039c2c0b7ea18522f50f"
+    },
+    {
+      "name": "DocumentClass",
+      "file": "DocumentClass.json",
+      "sha256": "d9c20c140efea948044479d0528cf4e377d9706880826c716d0d8bd423e81bde"
+    },
+    {
+      "name": "DocumentRecord",
+      "file": "DocumentRecord.json",
+      "sha256": "283b8cf7fe7e744a2bd35db3523c7d852918f4317a2baab18880fada4ac20a4c"
+    },
+    {
+      "name": "DrawingExtraction",
+      "file": "DrawingExtraction.json",
+      "sha256": "4d6e935603c795fff982e45aec67d933c59069e3ad83c0b09a14cff038ec5134"
+    },
+    {
+      "name": "DrawingTag",
+      "file": "DrawingTag.json",
+      "sha256": "5877f113b3704e2bac7d862e00c126a3293773af04b72db3115aeb422fcb5d84"
+    },
+    {
+      "name": "ExtractedBlock",
+      "file": "ExtractedBlock.json",
+      "sha256": "9ebdcc53b7a1f4585ba06e350bd98416319fbff9d12ad9cdab49f2a0f44637da"
+    },
+    {
+      "name": "ExtractionResult",
+      "file": "ExtractionResult.json",
+      "sha256": "a5e98569fd5ccce7250281d07809ee4ecb5c850d4263957e3f60f99ea35f8453"
+    },
+    {
+      "name": "FreshnessSpine",
+      "file": "FreshnessSpine.json",
+      "sha256": "9cd753ce304fa23708337bca71a5d33516d82317e04859c3ccaf32fb61a993a9"
+    },
+    {
+      "name": "FreshnessState",
+      "file": "FreshnessState.json",
+      "sha256": "cf0662f497902a38c341dba22bba87e5e051702317bfd04087751aeca21a0617"
+    },
+    {
+      "name": "GuardAlert",
+      "file": "GuardAlert.json",
+      "sha256": "c785cdfae192d271abfff8c80a0944bafb844568bf6564cb62e0c46d237171b2"
+    },
+    {
+      "name": "HealthReport",
+      "file": "HealthReport.json",
+      "sha256": "4106d593d4932bf56195d59502699adf395facb32742e73fdb47ee33ece82e87"
+    },
+    {
+      "name": "InspectionExtraction",
+      "file": "InspectionExtraction.json",
+      "sha256": "4433550e5127bff169c0c881bd8bf25e3b2ccc57e0d1046c4c7205eb7c8687dc"
+    },
+    {
+      "name": "InspectionFinding",
+      "file": "InspectionFinding.json",
+      "sha256": "32655fc189466d0e8706a8f4c1be8cab262c55d2f5234d0bc211a501362d8394"
+    },
+    {
+      "name": "Locality",
+      "file": "Locality.json",
+      "sha256": "85f33da9278f6909a0b2dd9a6aea3a4f6e9b85ed794d9f724bec8766ccd79402"
+    },
+    {
+      "name": "PalAuditEvent",
+      "file": "PalAuditEvent.json",
+      "sha256": "3ecc39d674bfd642ffc7cc202bf1a0a67a7628a09e7ec5ae2ad1d8858cac1fcf"
+    },
+    {
+      "name": "PipePressureDropInput",
+      "file": "PipePressureDropInput.json",
+      "sha256": "7968c4afbdb4ce9d10eda3d9846b2853134ff932ef78e95f8e2a7c4f0eba17ed"
+    },
+    {
+      "name": "Plan",
+      "file": "Plan.json",
+      "sha256": "19249a08b78c2d03e55e84172f4f7dc3ba9f57b26b80675f6d6b86d400a6e826"
+    },
+    {
+      "name": "PlanStep",
+      "file": "PlanStep.json",
+      "sha256": "b96d8ed552689616ad2a74b4c319db8770debfc1f42460b5986e5aae8e6ee7f5"
+    },
+    {
+      "name": "PluginManifest",
+      "file": "PluginManifest.json",
+      "sha256": "b73c813c8ac1911aaa66644330609ccaa4d9194b33f6afaec9194e60a9904205"
+    },
+    {
+      "name": "PluginRecord",
+      "file": "PluginRecord.json",
+      "sha256": "b62ddd4d5d1d9f3548c2e628a6185ab19de748edff143d30d2bd0f97d7949060"
+    },
+    {
+      "name": "PluginRuntime",
+      "file": "PluginRuntime.json",
+      "sha256": "029b788cfbdad0ce35bcf94b81392023650d122df6b69c0e56820c6aa7bd0a05"
+    },
+    {
+      "name": "ProviderCapability",
+      "file": "ProviderCapability.json",
+      "sha256": "0e681afcbd31c059b1de1e18cd0abfc7ccc9b6be5b23e49c27b83c681ffcc074"
+    },
+    {
+      "name": "ProviderMode",
+      "file": "ProviderMode.json",
+      "sha256": "f05ef07b6ce87d0093ab042ac405defd8964fd85f2d25565dfc87b6ec8c43b5a"
+    },
+    {
+      "name": "PumpHeadInput",
+      "file": "PumpHeadInput.json",
+      "sha256": "9671150fd2e909911599e54098dd5b7e76493b2516a5aae7a2fcd0167b9404e0"
+    },
+    {
+      "name": "Quantity",
+      "file": "Quantity.json",
+      "sha256": "b3485165a49bb1afa9bb417e877f2c15889bdbab575e84f1dd4f55b4f68f6bc3"
+    },
+    {
+      "name": "Recipe",
+      "file": "Recipe.json",
+      "sha256": "a40f699e648cc197428c9170f8a531c177fcbdb8833c0b32b9fb4cb552d2feeb"
+    },
+    {
+      "name": "RegistryEntry",
+      "file": "RegistryEntry.json",
+      "sha256": "cfb1b5272fd426dcc33f5b96e454c51ee9e6547fb9c5ebe3f56c8589e3ab15b0"
+    },
+    {
+      "name": "SchemaRef",
+      "file": "SchemaRef.json",
+      "sha256": "72803b914baddbea5a7ef0c7e362ab2485741a36c8f5db63a6e443eaa574cbe7"
+    },
+    {
+      "name": "ServerEvent",
+      "file": "ServerEvent.json",
+      "sha256": "dce0673aa5f0952d79d9bc85d50da22aea7d787e4a85194e562a33050b6d06c8"
+    },
+    {
+      "name": "StepStatus",
+      "file": "StepStatus.json",
+      "sha256": "5e26bb9b55a80e0f6c71337bb2e7d78314277290eb18e334bcd20af6daa82e83"
+    },
+    {
+      "name": "TaskType",
+      "file": "TaskType.json",
+      "sha256": "8b69beba414d3decb303c21d2ab7c9ac2722c72322c7ed656b4f2dda70bd067e"
+    },
+    {
+      "name": "ToolSpec",
+      "file": "ToolSpec.json",
+      "sha256": "3707b113995a207d75435dc0a2c28203fba6e4a0f936e14d4b1442d919790239"
+    },
+    {
+      "name": "TrustBoundary",
+      "file": "TrustBoundary.json",
+      "sha256": "0ef7f47ddfdc5c51d3f402d66b92bbd2d49fe7607f92b073cc311658511b8e13"
+    },
+    {
+      "name": "ValveSizingInput",
+      "file": "ValveSizingInput.json",
+      "sha256": "264f4ab0f18c8918c283ca56b48a9317941faa3cbd180dbb9a8b0687e79c0d58"
+    }
+  ]
+}

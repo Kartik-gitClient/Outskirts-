@@ -1,0 +1,15 @@
+{
+  "extends": "../../packages/schemas/tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@outskirts/schemas": ["../../packages/schemas/src/index.ts"],
+      "@outskirts/sovereignty": ["../../packages/sovereignty/src/index.ts"],
+      "@outskirts/pal": ["../../packages/pal/src/index.ts"],
+      "@outskirts/plugin-sdk": ["../../packages/plugin-sdk/src/index.ts"],
+      "@outskirts/knowledge": ["../../packages/knowledge/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

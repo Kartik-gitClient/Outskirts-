@@ -1,0 +1,132 @@
+{
+  "$id": "https://outskirts.local/schema/RegistryEntry.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "modelId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque identifier, unique within its collection"
+    },
+    "providerId": {
+      "type": "string",
+      "enum": [
+        "vllm",
+        "ollama",
+        "nim",
+        "nim-selfhosted",
+        "triton"
+      ]
+    },
+    "locality": {
+      "type": "string",
+      "enum": [
+        "in-process",
+        "loopback",
+        "lan",
+        "internet"
+      ],
+      "description": "Network distance of the endpoint that served the call"
+    },
+    "trustBoundary": {
+      "type": "string",
+      "enum": [
+        "inside-perimeter",
+        "outside-perimeter"
+      ],
+      "description": "Whether the endpoint sits inside the organisation perimeter"
+    },
+    "taskTypes": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "code",
+          "document",
+          "vision",
+          "calculation",
+          "retrieve"
+        ],
+        "description": "Step type; drives routing"
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "text",
+          "vision",
+          "embedding",
+          "tool-use",
+          "guided-json",
+          "seeded",
+          "streaming"
+        ]
+      },
+      "description": "Set by the conformance suite"
+    },
+    "modelDigest": {
+      "type": "string",
+      "minLength": 1
+    },
+    "quantisation": {
+      "type": "string",
+      "description": "e.g. Q4_K_M, AWQ, FP8, NVFP4"
+    },
+    "contextWindow": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "quality": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Benchmarked score for this task type"
+    },
+    "estLoadS": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Cold-load seconds; the router residency term"
+    },
+    "pinned": {
+      "default": false,
+      "description": "Keep resident; maps to llama-swap hooks",
+      "type": "boolean"
+    },
+    "status": {
+      "default": "untested",
+      "type": "string",
+      "enum": [
+        "enabled",
+        "disabled",
+        "untested"
+      ]
+    },
+    "license": {
+      "type": "string",
+      "description": "SPDX id or stated terms"
+    },
+    "licenseUrl": {
+      "type": "string",
+      "format": "uri"
+    }
+  },
+  "required": [
+    "modelId",
+    "providerId",
+    "locality",
+    "trustBoundary",
+    "taskTypes",
+    "capabilities",
+    "modelDigest",
+    "quantisation",
+    "contextWindow",
+    "quality",
+    "estLoadS",
+    "license"
+  ],
+  "additionalProperties": false
+}

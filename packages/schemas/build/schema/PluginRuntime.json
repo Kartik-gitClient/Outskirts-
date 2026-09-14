@@ -1,0 +1,10 @@
+{
+  "$id": "https://outskirts.local/schema/PluginRuntime.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "string",
+  "enum": [
+    "wasm",
+    "service",
+    "iframe"
+  ]
+}

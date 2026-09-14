@@ -1,0 +1,165 @@
+{
+  "$id": "https://outskirts.local/schema/PipePressureDropInput.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "length": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "number"
+        },
+        "unit": {
+          "type": "string",
+          "description": "Pint-parseable, e.g. \"m**3/h\", \"bar\", \"kg/m**3\""
+        },
+        "uncertainty": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "value",
+        "unit"
+      ],
+      "additionalProperties": false
+    },
+    "diameter": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "number"
+        },
+        "unit": {
+          "type": "string",
+          "description": "Pint-parseable, e.g. \"m**3/h\", \"bar\", \"kg/m**3\""
+        },
+        "uncertainty": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "value",
+        "unit"
+      ],
+      "additionalProperties": false
+    },
+    "roughness": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "number"
+        },
+        "unit": {
+          "type": "string",
+          "description": "Pint-parseable, e.g. \"m**3/h\", \"bar\", \"kg/m**3\""
+        },
+        "uncertainty": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "value",
+        "unit"
+      ],
+      "additionalProperties": false
+    },
+    "flow": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "number"
+        },
+        "unit": {
+          "type": "string",
+          "description": "Pint-parseable, e.g. \"m**3/h\", \"bar\", \"kg/m**3\""
+        },
+        "uncertainty": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "value",
+        "unit"
+      ],
+      "additionalProperties": false
+    },
+    "density": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "number"
+        },
+        "unit": {
+          "type": "string",
+          "description": "Pint-parseable, e.g. \"m**3/h\", \"bar\", \"kg/m**3\""
+        },
+        "uncertainty": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "value",
+        "unit"
+      ],
+      "additionalProperties": false
+    },
+    "viscosity": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "number"
+        },
+        "unit": {
+          "type": "string",
+          "description": "Pint-parseable, e.g. \"m**3/h\", \"bar\", \"kg/m**3\""
+        },
+        "uncertainty": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "value",
+        "unit"
+      ],
+      "additionalProperties": false
+    },
+    "fluid": {
+      "description": "CoolProp fluid name; supplies density/viscosity if omitted",
+      "type": "string"
+    },
+    "temperature": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "number"
+        },
+        "unit": {
+          "type": "string",
+          "description": "Pint-parseable, e.g. \"m**3/h\", \"bar\", \"kg/m**3\""
+        },
+        "uncertainty": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "value",
+        "unit"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "length",
+    "diameter",
+    "roughness",
+    "flow"
+  ],
+  "additionalProperties": false
+}

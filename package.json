@@ -1,0 +1,25 @@
+{
+  "name": "outskirts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Outskirts - the Sovereign AI Workbench",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "schema:build": "pnpm --filter @outskirts/schemas build",
+    "schema:check": "pnpm --filter @outskirts/schemas check",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "bench": "tsx benchmark/run.ts",
+    "demo:rehearse": "tsx benchmark/demo-rehearsal.ts",
+    "bundle:verify": "tsx installer/bundle.ts",
+    "dataset:synth": "tsx datasets/pid-synth/generator.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "tsx": "^4.19.2",
+    "vitest": "^2.1.8"
+  },
+  "packageManager": "pnpm@11.22.0"
+}

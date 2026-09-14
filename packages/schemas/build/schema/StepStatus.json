@@ -1,0 +1,13 @@
+{
+  "$id": "https://outskirts.local/schema/StepStatus.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "string",
+  "enum": [
+    "pending",
+    "running",
+    "done",
+    "failed",
+    "repaired",
+    "cancelled"
+  ]
+}

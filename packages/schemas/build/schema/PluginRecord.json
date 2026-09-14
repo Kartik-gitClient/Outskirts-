@@ -1,0 +1,189 @@
+{
+  "$id": "https://outskirts.local/schema/PluginRecord.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "manifest": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        },
+        "minCore": {
+          "type": "string",
+          "description": "semver range checked against the runtime version"
+        },
+        "runtime": {
+          "type": "string",
+          "enum": [
+            "wasm",
+            "service",
+            "iframe"
+          ]
+        },
+        "entry": {
+          "type": "string",
+          "description": "Worker module, image ref, or entry URL depending on runtime"
+        },
+        "network": {
+          "type": "string",
+          "const": "deny-all"
+        },
+        "fs": {
+          "type": "object",
+          "properties": {
+            "read": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "write": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "resources": {
+          "type": "object",
+          "properties": {
+            "cpu": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "mem": {
+              "type": "string",
+              "pattern": "^\\d+[MG]$"
+            },
+            "timeoutS": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "cpu",
+            "mem",
+            "timeoutS"
+          ],
+          "additionalProperties": false
+        },
+        "tools": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Offered to the planner; write it for a model to read"
+              },
+              "inputSchemaRef": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Name of a schema in @outskirts/schemas, e.g. \"ExtractionResult\""
+              },
+              "outputSchemaRef": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Name of a schema in @outskirts/schemas, e.g. \"ExtractionResult\""
+              }
+            },
+            "required": [
+              "name",
+              "description",
+              "inputSchemaRef",
+              "outputSchemaRef"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "keyId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^ed25519:[a-f0-9]+$"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "minCore",
+        "runtime",
+        "entry",
+        "network",
+        "fs",
+        "resources",
+        "tools",
+        "keyId",
+        "signature"
+      ],
+      "additionalProperties": false
+    },
+    "installedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+      "description": "ISO 8601 timestamp, UTC"
+    },
+    "signatureValid": {
+      "type": "boolean"
+    },
+    "keyTrusted": {
+      "type": "boolean"
+    },
+    "enabled": {
+      "default": false,
+      "type": "boolean"
+    },
+    "enabledBy": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque identifier, unique within its collection"
+    },
+    "roleGates": {
+      "default": [
+        "admin"
+      ],
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "junior",
+          "senior",
+          "admin"
+        ]
+      }
+    },
+    "manifestHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "Lowercase hex SHA-256 digest"
+    }
+  },
+  "required": [
+    "manifest",
+    "installedAt",
+    "signatureValid",
+    "keyTrusted",
+    "manifestHash"
+  ],
+  "additionalProperties": false
+}

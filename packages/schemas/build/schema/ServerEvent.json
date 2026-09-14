@@ -1,0 +1,945 @@
+{
+  "$id": "https://outskirts.local/schema/ServerEvent.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "step.update"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Monotonic sequence number, per task"
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+          "description": "ISO 8601 timestamp, UTC"
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque identifier, unique within its collection"
+        },
+        "stepId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque identifier, unique within its collection"
+        },
+        "node": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "running",
+            "done",
+            "failed",
+            "repaired",
+            "cancelled"
+          ]
+        },
+        "payloadDigest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "seq",
+        "ts",
+        "taskId",
+        "stepId",
+        "node",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "plan.ready"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Monotonic sequence number, per task"
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+          "description": "ISO 8601 timestamp, UTC"
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque identifier, unique within its collection"
+        },
+        "plan": {
+          "type": "object",
+          "properties": {
+            "taskId": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Opaque identifier, unique within its collection"
+            },
+            "recipeId": {
+              "description": "Absent when the free-form planner produced this",
+              "type": "string",
+              "minLength": 1
+            },
+            "steps": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "stepId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Opaque identifier, unique within its collection"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "code",
+                      "document",
+                      "vision",
+                      "calculation",
+                      "retrieve"
+                    ],
+                    "description": "Step type; drives routing"
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Planner's natural-language intent"
+                  },
+                  "dependsOn": {
+                    "default": [],
+                    "description": "Step ids; validated acyclic and reachable",
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "Opaque identifier, unique within its collection"
+                    }
+                  },
+                  "plugins": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "outputSchemaRef": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Name of a schema in @outskirts/schemas, e.g. \"ExtractionResult\""
+                  },
+                  "status": {
+                    "default": "pending",
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "running",
+                      "done",
+                      "failed",
+                      "repaired",
+                      "cancelled"
+                    ]
+                  }
+                },
+                "required": [
+                  "stepId",
+                  "kind",
+                  "description"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "taskId",
+            "steps"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "seq",
+        "ts",
+        "taskId",
+        "plan"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "token.chunk"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Monotonic sequence number, per task"
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+          "description": "ISO 8601 timestamp, UTC"
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque identifier, unique within its collection"
+        },
+        "streamId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque identifier, unique within its collection"
+        },
+        "delta": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "seq",
+        "ts",
+        "taskId",
+        "streamId",
+        "delta"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "router.decision"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Monotonic sequence number, per task"
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+          "description": "ISO 8601 timestamp, UTC"
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque identifier, unique within its collection"
+        },
+        "stepId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque identifier, unique within its collection"
+        },
+        "taskType": {
+          "type": "string",
+          "enum": [
+            "code",
+            "document",
+            "vision",
+            "calculation",
+            "retrieve"
+          ],
+          "description": "Step type; drives routing"
+        },
+        "model": {
+          "type": "string"
+        },
+        "providerId": {
+          "type": "string"
+        },
+        "locality": {
+          "type": "string",
+          "enum": [
+            "in-process",
+            "loopback",
+            "lan",
+            "internet"
+          ],
+          "description": "Network distance of the endpoint that served the call"
+        },
+        "trustBoundary": {
+          "type": "string",
+          "enum": [
+            "inside-perimeter",
+            "outside-perimeter"
+          ],
+          "description": "Whether the endpoint sits inside the organisation perimeter"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "wasFallback": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "seq",
+        "ts",
+        "taskId",
+        "stepId",
+        "taskType",
+        "model",
+        "providerId",
+        "locality",
+        "trustBoundary",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "critic.verdict"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Monotonic sequence number, per task"
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+          "description": "ISO 8601 timestamp, UTC"
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque identifier, unique within its collection"
+        },
+        "verdict": {
+          "type": "object",
+          "properties": {
+            "taskId": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Opaque identifier, unique within its collection"
+            },
+            "stepId": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Opaque identifier, unique within its collection"
+            },
+            "gate": {
+              "type": "string",
+              "enum": [
+                "pass",
+                "fail"
+              ]
+            },
+            "deterministicPass": {
+              "type": "boolean"
+            },
+            "verdicts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "claimId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Opaque identifier, unique within its collection"
+                  },
+                  "check": {
+                    "type": "string",
+                    "enum": [
+                      "C1_NUMERIC_GROUNDING",
+                      "C2_CALCULATION_REPLAY",
+                      "C3_CITATION_RESOLVABILITY",
+                      "C4_TEMPLATE_COMPLETENESS",
+                      "C5_FRESHNESS_POLICY",
+                      "C6_COHERENCE"
+                    ]
+                  },
+                  "pass": {
+                    "type": "boolean"
+                  },
+                  "offending": {
+                    "type": "string"
+                  },
+                  "note": {
+                    "type": "string"
+                  },
+                  "evidenceRef": {
+                    "description": "chunkId or calc transcript id backing this",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "claimId",
+                  "check",
+                  "pass"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "repairTarget": {
+              "description": "Failing step to retry, with its downstream",
+              "type": "string",
+              "minLength": 1
+            },
+            "repairsUsed": {
+              "default": 0,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "escalated": {
+              "default": false,
+              "description": "Budget exhausted; routed to review queue",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "taskId",
+            "stepId",
+            "gate",
+            "deterministicPass",
+            "verdicts"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "seq",
+        "ts",
+        "taskId",
+        "verdict"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "artifact.ready"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Monotonic sequence number, per task"
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+          "description": "ISO 8601 timestamp, UTC"
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque identifier, unique within its collection"
+        },
+        "artifactId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque identifier, unique within its collection"
+        },
+        "artifactType": {
+          "type": "string",
+          "enum": [
+            "docx",
+            "xlsx",
+            "pptx",
+            "pdf",
+            "code",
+            "chart"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "c2paManifestRef": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "seq",
+        "ts",
+        "taskId",
+        "artifactId",
+        "artifactType",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "ingest.progress"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Monotonic sequence number, per task"
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+          "description": "ISO 8601 timestamp, UTC"
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque identifier, unique within its collection"
+        },
+        "documentId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque identifier, unique within its collection"
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "acquire",
+            "extract",
+            "chunk",
+            "embed",
+            "register"
+          ]
+        },
+        "pagesDone": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "pagesTotal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "type",
+        "seq",
+        "ts",
+        "taskId",
+        "documentId",
+        "stage"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "sovereignty.event"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Monotonic sequence number, per task"
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+          "description": "ISO 8601 timestamp, UTC"
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque identifier, unique within its collection"
+        },
+        "locality": {
+          "type": "string",
+          "enum": [
+            "in-process",
+            "loopback",
+            "lan",
+            "internet"
+          ],
+          "description": "Network distance of the endpoint that served the call"
+        },
+        "trustBoundary": {
+          "type": "string",
+          "enum": [
+            "inside-perimeter",
+            "outside-perimeter"
+          ],
+          "description": "Whether the endpoint sits inside the organisation perimeter"
+        },
+        "endpointHost": {
+          "type": "string"
+        },
+        "cacheHit": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "seq",
+        "ts",
+        "taskId",
+        "locality",
+        "trustBoundary",
+        "endpointHost"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "sovereignty.alert"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Monotonic sequence number, per task"
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+          "description": "ISO 8601 timestamp, UTC"
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque identifier, unique within its collection"
+        },
+        "alert": {
+          "type": "object",
+          "properties": {
+            "alertId": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Opaque identifier, unique within its collection"
+            },
+            "seq": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "description": "Monotonic sequence number, per task"
+            },
+            "ts": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+              "description": "ISO 8601 timestamp, UTC"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "egress-blocked",
+                "signature-invalid",
+                "key-untrusted",
+                "fs-denied",
+                "resource-exceeded"
+              ]
+            },
+            "pluginId": {
+              "type": "string"
+            },
+            "pluginVersion": {
+              "type": "string"
+            },
+            "targetHost": {
+              "type": "string"
+            },
+            "detail": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "alertId",
+            "seq",
+            "ts",
+            "kind",
+            "pluginId",
+            "detail"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "seq",
+        "ts",
+        "taskId",
+        "alert"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "mode.changed"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Monotonic sequence number, per task"
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+          "description": "ISO 8601 timestamp, UTC"
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque identifier, unique within its collection"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "SOVEREIGN",
+            "ASSIST"
+          ],
+          "description": "SOVEREIGN refuses every outside-perimeter provider. Default in code."
+        },
+        "transitionAuditId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque identifier, unique within its collection"
+        }
+      },
+      "required": [
+        "type",
+        "seq",
+        "ts",
+        "taskId",
+        "mode",
+        "transitionAuditId"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "cache.hit"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Monotonic sequence number, per task"
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+          "description": "ISO 8601 timestamp, UTC"
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque identifier, unique within its collection"
+        },
+        "stepId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque identifier, unique within its collection"
+        },
+        "model": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "seq",
+        "ts",
+        "taskId",
+        "stepId",
+        "model"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "step.retry"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Monotonic sequence number, per task"
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+          "description": "ISO 8601 timestamp, UTC"
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque identifier, unique within its collection"
+        },
+        "stepId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque identifier, unique within its collection"
+        },
+        "attempt": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "budget": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "seq",
+        "ts",
+        "taskId",
+        "stepId",
+        "attempt",
+        "budget",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "task.complete"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Monotonic sequence number, per task"
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+          "description": "ISO 8601 timestamp, UTC"
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque identifier, unique within its collection"
+        },
+        "dnaId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque identifier, unique within its collection"
+        },
+        "artifactIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque identifier, unique within its collection"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "seq",
+        "ts",
+        "taskId",
+        "dnaId",
+        "artifactIds"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "task.failed"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Monotonic sequence number, per task"
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+          "description": "ISO 8601 timestamp, UTC"
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque identifier, unique within its collection"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "escalated": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "seq",
+        "ts",
+        "taskId",
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

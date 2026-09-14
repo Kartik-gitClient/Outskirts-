@@ -1,0 +1,53 @@
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: "outskirts-kernel-egress-guard"
+  namespace: "kube-system"
+  labels:
+    app.kubernetes.io/name: "outskirts"
+    sovereignty.plane: "kernel"
+    enforcement: "ebpf-kill-on-egress"
+spec:
+  kprobes:
+    # 1. Audit and terminate unauthorized outbound TCP connections
+    - call: "tcp_connect"
+      syscall: false
+      args:
+        - index: 0
+          type: "sock"
+      selectors:
+        # Target containers in the Outskirts runtime and capability planes
+        - matchNamespaces:
+            - "outskirts"
+          matchArgs:
+            - index: 0
+              operator: "NotDAddr"
+              values:
+                - "127.0.0.1"      # Loopback allowed
+                - "172.18.0.0/16"  # Docker internal backplane network
+                - "10.96.0.0/12"    # Cluster internal service CIDR
+          matchActions:
+            - action: Sigkill
+            - action: Post
+              rateLimit: "10m"
+
+    # 2. Audit syscall connect for raw / UDP socket egress attempts
+    - call: "sys_enter_connect"
+      syscall: true
+      args:
+        - index: 0
+          type: "int"
+        - index: 1
+          type: "sockaddr"
+      selectors:
+        - matchNamespaces:
+            - "outskirts"
+          matchArgs:
+            - index: 1
+              operator: "NotDAddr"
+              values:
+                - "127.0.0.1"
+                - "172.18.0.0/16"
+          matchActions:
+            - action: Sigkill
+            - action: Post

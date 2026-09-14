@@ -1,0 +1,141 @@
+{
+  "$id": "https://outskirts.local/schema/CalcResult.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "calcId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque identifier, unique within its collection"
+    },
+    "tool": {
+      "type": "string"
+    },
+    "correlation": {
+      "type": "string",
+      "description": "Governing method, e.g. \"Darcy-Weisbach / Colebrook\""
+    },
+    "reference": {
+      "description": "Standard or text the correlation comes from",
+      "type": "string"
+    },
+    "inputs": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "number"
+          },
+          "unit": {
+            "type": "string",
+            "description": "Pint-parseable, e.g. \"m**3/h\", \"bar\", \"kg/m**3\""
+          },
+          "uncertainty": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "value",
+          "unit"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "number"
+        },
+        "unit": {
+          "type": "string",
+          "description": "Pint-parseable, e.g. \"m**3/h\", \"bar\", \"kg/m**3\""
+        },
+        "uncertainty": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "value",
+        "unit"
+      ],
+      "additionalProperties": false
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "ordinal": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "description": {
+            "type": "string"
+          },
+          "expression": {
+            "description": "SymPy-parseable, for C2 verification",
+            "type": "string"
+          },
+          "result": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "type": "number"
+              },
+              "unit": {
+                "type": "string",
+                "description": "Pint-parseable, e.g. \"m**3/h\", \"bar\", \"kg/m**3\""
+              },
+              "uncertainty": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "value",
+              "unit"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "ordinal",
+          "description"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "assumptions": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "validityWarnings": {
+      "default": [],
+      "description": "e.g. Reynolds outside correlation range",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "calcId",
+    "tool",
+    "correlation",
+    "inputs",
+    "result",
+    "steps"
+  ],
+  "additionalProperties": false
+}

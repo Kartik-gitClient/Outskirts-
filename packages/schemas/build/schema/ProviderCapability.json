@@ -1,0 +1,14 @@
+{
+  "$id": "https://outskirts.local/schema/ProviderCapability.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "string",
+  "enum": [
+    "text",
+    "vision",
+    "embedding",
+    "tool-use",
+    "guided-json",
+    "seeded",
+    "streaming"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "$id": "https://outskirts.local/schema/FreshnessState.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "string",
+  "enum": [
+    "FRESH",
+    "AGING",
+    "STALE",
+    "CRITICAL",
+    "RECORD",
+    "UNVERIFIED"
+  ]
+}

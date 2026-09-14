@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The schema spine is the mechanism that keeps the TypeScript control
+      # plane and the Python capability plane validating the same contract.
+      # If someone edits a Zod schema and forgets to regenerate, the two planes
+      # have silently diverged -- so this runs before anything else, and a stale
+      # artefact fails the build rather than producing a confusing type error
+      # somewhere downstream three days later.
+      - name: Schema spine is current
+        run: pnpm schema:check
+
+      - name: Typecheck
+        run: pnpm -r typecheck
+
+      - name: Unit tests
+        run: pnpm -r test
+
+  # Principle 2: sovereignty is enforced by topology, not monitoring. The claim
+  # is only worth making if it is measured, so it is measured here on every
+  # change rather than once before a demo.
+  egress:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No route to the internet from the backplane
+        run: ./deploy/verify-egress.sh

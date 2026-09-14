@@ -1,0 +1,29 @@
+node_modules/
+dist/
+build/tsbuildinfo
+*.tsbuildinfo
+.env
+.env.local
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# model weights and corpora are staged, never committed
+models/
+weights/
+*.gguf
+*.safetensors
+*.onnx
+
+# benchmark outputs, captures and evidence artefacts
+benchmark/runs/
+deploy/captures/
+*.pcap
+
+# cassettes are committed deliberately (see packages/pal/cassettes)
+# so they are NOT ignored here
+
+# build output
+apps/desktop/dist/

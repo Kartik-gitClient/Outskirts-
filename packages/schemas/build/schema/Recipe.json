@@ -1,0 +1,139 @@
+{
+  "$id": "https://outskirts.local/schema/Recipe.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "recipeId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque identifier, unique within its collection"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "matches": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Intent phrases the selector matches against"
+    },
+    "parameters": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "schemaRef": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Name of a schema in @outskirts/schemas, e.g. \"ExtractionResult\""
+          },
+          "required": {
+            "default": true,
+            "type": "boolean"
+          },
+          "description": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "schemaRef"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "steps": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "stepId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque identifier, unique within its collection"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "code",
+              "document",
+              "vision",
+              "calculation",
+              "retrieve"
+            ],
+            "description": "Step type; drives routing"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Planner's natural-language intent"
+          },
+          "dependsOn": {
+            "default": [],
+            "description": "Step ids; validated acyclic and reachable",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Opaque identifier, unique within its collection"
+            }
+          },
+          "plugins": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "outputSchemaRef": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Name of a schema in @outskirts/schemas, e.g. \"ExtractionResult\""
+          },
+          "status": {
+            "default": "pending",
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "done",
+              "failed",
+              "repaired",
+              "cancelled"
+            ]
+          }
+        },
+        "required": [
+          "stepId",
+          "kind",
+          "description"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "recipeId",
+    "version",
+    "title",
+    "description",
+    "matches",
+    "steps"
+  ],
+  "additionalProperties": false
+}

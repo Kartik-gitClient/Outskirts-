@@ -1,0 +1,139 @@
+{
+  "$id": "https://outskirts.local/schema/DocumentRecord.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "documentId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque identifier, unique within its collection"
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque identifier, unique within its collection"
+    },
+    "filename": {
+      "type": "string"
+    },
+    "mimeType": {
+      "type": "string"
+    },
+    "sourcePath": {
+      "type": "string"
+    },
+    "ingestedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+      "description": "ISO 8601 timestamp, UTC"
+    },
+    "freshness": {
+      "type": "object",
+      "properties": {
+        "fingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "description": "SHA-256 of extracted text"
+        },
+        "documentClass": {
+          "type": "string",
+          "enum": [
+            "GOVERNING",
+            "RECORD",
+            "REFERENCE",
+            "UNVERIFIED"
+          ]
+        },
+        "classificationSource": {
+          "default": "classifier",
+          "type": "string",
+          "enum": [
+            "metadata",
+            "classifier",
+            "human"
+          ]
+        },
+        "author": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "string"
+        },
+        "effectiveDate": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+          "description": "ISO 8601 timestamp, UTC"
+        },
+        "reviewIntervalDays": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "nextReview": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+          "description": "ISO 8601 timestamp, UTC"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "asOfDate": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+          "description": "ISO 8601 timestamp, UTC"
+        },
+        "supersededBy": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque identifier, unique within its collection"
+        },
+        "decay": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "FRESH",
+            "AGING",
+            "STALE",
+            "CRITICAL",
+            "RECORD",
+            "UNVERIFIED"
+          ]
+        }
+      },
+      "required": [
+        "fingerprint",
+        "documentClass",
+        "decay",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "pageCount": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "extractionEngine": {
+      "description": "e.g. paddleocr-vl-1.6, docling-2.x",
+      "type": "string"
+    }
+  },
+  "required": [
+    "documentId",
+    "projectId",
+    "filename",
+    "mimeType",
+    "sourcePath",
+    "ingestedAt",
+    "freshness"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,8 @@
+{
+  "//": "Scripts and tests may use Node APIs. src/ deliberately may not -- the React client imports the same schemas, so a node: import in src/ would break the browser build. Keeping the two configs separate is what enforces that.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"]
+}

@@ -1,0 +1,94 @@
+{
+  "$id": "https://outskirts.local/schema/CriticVerdict.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "taskId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque identifier, unique within its collection"
+    },
+    "stepId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque identifier, unique within its collection"
+    },
+    "gate": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "fail"
+      ]
+    },
+    "deterministicPass": {
+      "type": "boolean"
+    },
+    "verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "claimId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque identifier, unique within its collection"
+          },
+          "check": {
+            "type": "string",
+            "enum": [
+              "C1_NUMERIC_GROUNDING",
+              "C2_CALCULATION_REPLAY",
+              "C3_CITATION_RESOLVABILITY",
+              "C4_TEMPLATE_COMPLETENESS",
+              "C5_FRESHNESS_POLICY",
+              "C6_COHERENCE"
+            ]
+          },
+          "pass": {
+            "type": "boolean"
+          },
+          "offending": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "evidenceRef": {
+            "description": "chunkId or calc transcript id backing this",
+            "type": "string"
+          }
+        },
+        "required": [
+          "claimId",
+          "check",
+          "pass"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "repairTarget": {
+      "description": "Failing step to retry, with its downstream",
+      "type": "string",
+      "minLength": 1
+    },
+    "repairsUsed": {
+      "default": 0,
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "escalated": {
+      "default": false,
+      "description": "Budget exhausted; routed to review queue",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "taskId",
+    "stepId",
+    "gate",
+    "deterministicPass",
+    "verdicts"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,12 @@
+{
+  "$id": "https://outskirts.local/schema/Locality.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "string",
+  "enum": [
+    "in-process",
+    "loopback",
+    "lan",
+    "internet"
+  ],
+  "description": "Network distance of the endpoint that served the call"
+}
