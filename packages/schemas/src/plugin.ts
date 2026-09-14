@@ -49,8 +49,8 @@ export const PluginManifest = z.object({
   tools: z.array(ToolSpec).min(1),
   /**
    * Signature is verified against a pinned org trust root with a keyId
-   * allowlist. Without the allowlist a signature verifies nothing: a
-   * self-signed rogue plugin is still correctly signed.
+   * allowlist. Without the allowlist a signature verifies nothing:
+   * a self-signed unauthorized plugin still produces a valid signature.
    */
   keyId: z.string().min(1),
   signature: z.string().regex(/^ed25519:[a-f0-9]+$/),
@@ -70,9 +70,9 @@ export const PluginRecord = z.object({
 /**
  * Emitted when a plugin attempts something its manifest forbids.
  *
- * The rogue test ships in two variants because they prove different things:
- * a valid key with a lying manifest proves the enforcement boundary, and an
- * untrusted key proves the admission check. v1.0 conflated the two.
+ * The negative-case test ships in two variants because they prove different things:
+ * a valid key with an undeclared-capability manifest proves the enforcement boundary,
+ * and an untrusted key proves the admission check. v1.0 combined both into one test.
  */
 export const GuardAlert = z.object({
   alertId: Id,

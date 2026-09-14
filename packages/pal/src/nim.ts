@@ -26,7 +26,7 @@ export class NimAdapter implements ProviderAdapter {
   public readonly id: ProviderId = 'nim';
   public readonly locality: Locality;
   public readonly trustBoundary: TrustBoundary;
-  public readonly endpointHost: string;
+  public endpointHost: string;
   public capabilities: ProviderCapability[] = [
     'text',
     'vision',
@@ -36,8 +36,8 @@ export class NimAdapter implements ProviderAdapter {
     'streaming',
   ];
 
-  private readonly baseUrl: string;
-  private readonly apiKey: string;
+  private baseUrl: string;
+  private apiKey: string;
   private readonly fetch: typeof fetch;
 
   constructor(options?: NimAdapterOptions) {
@@ -74,17 +74,10 @@ export class NimAdapter implements ProviderAdapter {
       payload.response_format = { type: 'json_object' };
     }
 
-    // If no API key is provided, provide an intelligent offline response rather than crashing
+    // No key means no provider. Report it honestly so the caller can fall back
+    // to the local sovereign model rather than treating a canned string as output.
     if (!this.apiKey) {
-      const latencyMs = performance.now() - start;
-      return {
-        content: `[NIM Dev Adapter] Processed query for model ${model.modelId} (Set NIM_API_KEY in environment for live NVIDIA NIM cloud inference).`,
-        role: 'assistant',
-        tokensIn: 50,
-        tokensOut: 30,
-        latencyMs,
-        loadMs: 0,
-      };
+      throw new Error('NIM provider not configured: set NIM_API_KEY (or OPENAI_API_KEY)');
     }
 
     const res = await this.fetch(`${this.baseUrl}/chat/completions`, {
@@ -192,12 +185,36 @@ export class NimAdapter implements ProviderAdapter {
 
   public async health(): Promise<HealthReport> {
     const checkedAt = new Date().toISOString();
+    if (!this.apiKey) {
+      return {
+        providerId: this.id,
+        healthy: false,
+        checkedAt,
+        residentModels: [],
+        devicePlacement: 'unknown',
+        detail: 'NIM_API_KEY not set',
+      };
+    }
     return {
       providerId: this.id,
       healthy: true,
       checkedAt,
-      residentModels: ['meta/llama-3.1-70b-instruct', 'qwen2.5-32b-instruct'],
+      residentModels: [],
       devicePlacement: 'unknown',
+      detail: 'remote (outside perimeter; ASSIST mode only)',
     };
+  }
+
+  public isConfigured(): boolean {
+    return this.apiKey.length > 0;
+  }
+
+  /** Configure at runtime (e.g. from the admin console) without a restart. */
+  public configure(options: { apiKey?: string; baseUrl?: string }): void {
+    if (options.apiKey?.trim()) this.apiKey = options.apiKey.trim();
+    if (options.baseUrl?.trim()) {
+      this.baseUrl = options.baseUrl.trim();
+      this.endpointHost = new URL(this.baseUrl).host;
+    }
   }
 }

@@ -62,7 +62,7 @@ export const ArtifactReady = z.object({
   type: z.literal('artifact.ready'),
   ...base,
   artifactId: Id,
-  artifactType: z.enum(['docx', 'xlsx', 'pptx', 'pdf', 'code', 'chart']),
+  artifactType: z.enum(['docx', 'xlsx', 'pptx', 'pdf', 'code', 'chart', 'text', 'html', 'svg']),
   path: z.string(),
   c2paManifestRef: z.string().optional(),
 });

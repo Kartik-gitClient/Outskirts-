@@ -11,3 +11,13 @@ if (rootElement) {
     </React.StrictMode>,
   );
 }
+
+// Install as a desktop app: registers the shell worker so the window opens
+// instantly and works even if the Vite dev server is briefly unavailable.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {
+      /* SW is an enhancement only */
+    });
+  });
+}

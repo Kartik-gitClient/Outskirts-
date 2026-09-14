@@ -43,7 +43,7 @@ export const CriticVerdict = z.object({
   gate: z.enum(['pass', 'fail']),
   /**
    * Reported separately from the LLM-dependent figure, always.
-   * Merging them into one headline number would be dishonest about which part
+   * Merging them into one headline number would be misleading about which part
    * of the catch rate is mechanism and which part is judgement.
    */
   deterministicPass: z.boolean(),

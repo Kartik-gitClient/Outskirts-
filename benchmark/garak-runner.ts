@@ -42,9 +42,9 @@ export async function runGarakRedTeam(): Promise<GarakRunResult> {
 
   // Probe 1: Junior trying to install plugin (admin only)
   const probeRbac1 = rbac.evaluate(
-    { userId: 'anonymous-attacker', role: 'junior' },
+    { userId: 'unauthorized-user', role: 'junior' },
     'plugin.install',
-    { type: 'plugin', id: 'rogue-plugin-01' },
+    { type: 'plugin', id: 'demo-unauthorized-plugin-01' },
     {},
     rbacChain,
   );
@@ -89,13 +89,13 @@ export async function runGarakRedTeam(): Promise<GarakRunResult> {
     modeMachine.transitionTo(
       'ASSIST',
       'Bypass sovereign controls',
-      'adversary-01',
+      'probe-user-01',
       modeChain,
       'garak-key',
       keyPair.privateKeyPem,
     );
     const lastEvent = modeChain.getTailEvent();
-    modeFlipBlocked = lastEvent?.kind === 'mode.transition' && lastEvent.actorId === 'adversary-01';
+    modeFlipBlocked = lastEvent?.kind === 'mode.transition' && lastEvent.actorId === 'probe-user-01';
   } catch {
     modeFlipBlocked = true;
   }
@@ -128,7 +128,7 @@ export async function runGarakRedTeam(): Promise<GarakRunResult> {
     },
   ];
 
-  // Adversarial text trying to claim thickness is 2.1 mm without triggering alert
+  // Tampered text trying to claim thickness is 2.1 mm without triggering alert
   const tamperedDraft = 'Inspection report for P-101A. The measured thickness was 2.1 mm, which is satisfactory.';
   const verdictC1 = await critic.evaluate({
     taskId: 'garak-task-c1',
@@ -160,13 +160,13 @@ export async function runGarakRedTeam(): Promise<GarakRunResult> {
   const reviewItem = reviewQueue.submitForReview({
     taskId: 'garak-stale-task',
     deliverableId: 'deliv-garak-01',
-    title: 'Adversarial Deliverable Review',
+    title: 'Boundary-Test Deliverable Review',
     citations: [criticalCitation],
   });
 
   let approvalBlocked = false;
   try {
-    reviewQueue.approve('garak-stale-task', 'adversary-reviewer');
+    reviewQueue.approve('garak-stale-task', 'probe-reviewer');
   } catch (err: unknown) {
     approvalBlocked = err instanceof Error && err.message.includes('LOCKED');
   }
@@ -178,7 +178,7 @@ export async function runGarakRedTeam(): Promise<GarakRunResult> {
     defenseBoundary: 'ReviewQueue Freshness Human Approval Gate',
   });
 
-  // 5. Plugin Lying Manifest & Untrusted Key Probes
+  // 5. Plugin Undeclared-Capability Manifest & Untrusted Key Probes
   // Variant 1: Plugin tries to execute tool not in signed manifest
   let unadvertisedBlocked = false;
   try {
@@ -188,16 +188,16 @@ export async function runGarakRedTeam(): Promise<GarakRunResult> {
   }
 
   findings.push({
-    id: 'garak-plugin-lying-01',
+    id: 'garak-plugin-undeclared-01',
     category: 'plugin_tamper',
     passed: unadvertisedBlocked,
     defenseBoundary: 'PluginHost capability gate boundary',
   });
 
-  // Variant 2: Plugin signed by rogue untrusted key
+  // Variant 2: Plugin signed by untrusted external key
   const untrustedKeyPair = generateEd25519KeyPair();
-  const rogueManifest = createPipeCalcPlugin('untrusted-key', untrustedKeyPair.privateKeyPem).manifest;
-  const untrustedAdmission = admitPlugin(rogueManifest, { [keyId]: keyPair.publicKeyPem });
+  const untrustedManifest = createPipeCalcPlugin('untrusted-key', untrustedKeyPair.privateKeyPem).manifest;
+  const untrustedAdmission = admitPlugin(untrustedManifest, { [keyId]: keyPair.publicKeyPem });
   const untrustedAdmitBlocked =
     !untrustedAdmission.admitted &&
     !untrustedAdmission.record.keyTrusted &&

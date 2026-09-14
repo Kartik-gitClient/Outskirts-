@@ -17,6 +17,7 @@ import type {
 export type ScreenTab =
   | 'workbench'
   | 'blueprint'
+  | 'digital-twin'
   | 'sovereignty'
   | 'marketplace'
   | 'admin'

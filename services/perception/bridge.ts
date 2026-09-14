@@ -69,27 +69,30 @@ export class PerceptionBridge {
     extraction: DrawingExtraction;
     source: 'python-container' | 'local-deterministic-replay';
   }> {
+    const sheet = generateSyntheticPidSheet({ itemCount, sheetId: documentId });
+
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.timeoutMs);
       const res = await fetch(`${this.serviceUrl}/perception/extract_pid`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ documentId, itemCount }),
+        body: JSON.stringify({ documentId, itemCount, svgContent: sheet.svgContent }),
         signal: controller.signal,
       });
       clearTimeout(timer);
 
       if (res.ok) {
         const data = (await res.json()) as DrawingExtraction;
-        return { extraction: data, source: 'python-container' };
+        if (data.tags && data.tags.length > 0) {
+          return { extraction: data, source: 'python-container' };
+        }
       }
     } catch {
       // offline fallback
     }
 
-    const sheet = generateSyntheticPidSheet({ itemCount, sheetId: documentId });
-    const localExtraction = this.detector.extractTags(documentId, sheet.groundTruth.tags, false);
+    const localExtraction = this.detector.detectFromDrawing(sheet.svgContent, documentId, false);
     localExtraction.connections = sheet.groundTruth.connections;
     return { extraction: localExtraction, source: 'local-deterministic-replay' };
   }

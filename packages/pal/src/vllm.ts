@@ -8,6 +8,7 @@ import type {
   TrustBoundary,
 } from '@outskirts/schemas';
 import type { ProviderAdapter, ChatResponse, StreamChunk } from './adapter.js';
+import { openAiResponseFormat } from './constraint.js';
 
 export interface VllmAdapterOptions {
   baseUrl?: string;
@@ -62,8 +63,8 @@ export class VllmAdapter implements ProviderAdapter {
     }
 
     if (req.outputSchemaRef) {
-      // vLLM guided decoding parameter
-      payload.guided_json = req.outputSchemaRef;
+      // The resolved schema object, not the ref. See constraint.ts.
+      payload.response_format = openAiResponseFormat(req.outputSchemaRef);
     }
 
     const res = await this.fetch(`${this.baseUrl}/v1/chat/completions`, {
@@ -111,7 +112,7 @@ export class VllmAdapter implements ProviderAdapter {
     }
 
     if (req.outputSchemaRef) {
-      payload.guided_json = req.outputSchemaRef;
+      payload.response_format = openAiResponseFormat(req.outputSchemaRef);
     }
 
     const res = await this.fetch(`${this.baseUrl}/v1/chat/completions`, {

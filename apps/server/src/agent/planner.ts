@@ -8,6 +8,7 @@ export type WorkflowIntent =
   | 'PID_ANALYSIS'
   | 'SPREADSHEET_EXCEL'
   | 'PRESENTATION_DECK'
+  | 'DIGITAL_TWIN'
   | 'KNOWLEDGE_QA'
   | 'CUSTOM_GOAL';
 
@@ -35,7 +36,44 @@ export class DynamicAgentPlanner {
     let intent: WorkflowIntent = 'REPORT_APPROVAL';
     let suggestedArtifactType: PlanGenerationResult['suggestedArtifactType'] = 'docx';
 
+    // A question with no action verb is answering, not authoring. Without this,
+    // "what is the minimum wall thickness?" ran the full approval-note pipeline.
+    const isQuestion =
+      /^(what|how|why|which|who|where|when|is|are|do|does|can)\b/.test(lower.trim()) || lower.trim().endsWith('?');
+    const isAction =
+      /\b(produce|make|generate|create|build|write|compile|analyse|analyze|scan|run|simulate|draft|prepare|trace)\b/.test(
+        lower,
+      );
+
     if (
+      lower.includes('digital twin') ||
+      lower.includes('simulate') ||
+      lower.includes('simulation') ||
+      lower.includes('what-if') ||
+      lower.includes('what if') ||
+      lower.includes('shutdown') ||
+      lower.includes('feedstock') ||
+      lower.includes('equipment replacement') ||
+      lower.includes('scenario')
+    ) {
+      intent = 'DIGITAL_TWIN';
+      suggestedArtifactType = 'docx';
+    } else if (
+      lower.includes('p&id') ||
+      lower.includes('drawing') ||
+      lower.includes('diagram') ||
+      lower.includes('isolation') ||
+      lower.includes('valve') ||
+      lower.includes('topology') ||
+      lower.includes('what feeds') ||
+      lower.includes('what does')
+    ) {
+      intent = 'PID_ANALYSIS';
+      suggestedArtifactType = 'drawing';
+    } else if (isQuestion && !isAction) {
+      intent = 'KNOWLEDGE_QA';
+      suggestedArtifactType = 'text';
+    } else if (
       lower.includes('report') ||
       lower.includes('approval') ||
       lower.includes('thickness') ||
@@ -55,25 +93,12 @@ export class DynamicAgentPlanner {
     ) {
       intent = 'MICROTOOL_CODE';
       suggestedArtifactType = 'microtool';
-    } else if (
-      lower.includes('p&id') ||
-      lower.includes('drawing') ||
-      lower.includes('diagram') ||
-      lower.includes('isolation') ||
-      lower.includes('valve') ||
-      lower.includes('topology')
-    ) {
-      intent = 'PID_ANALYSIS';
-      suggestedArtifactType = 'drawing';
     } else if (lower.includes('excel') || lower.includes('spreadsheet') || lower.includes('workbook')) {
       intent = 'SPREADSHEET_EXCEL';
       suggestedArtifactType = 'xlsx';
     } else if (lower.includes('deck') || lower.includes('powerpoint') || lower.includes('presentation') || lower.includes('slides')) {
       intent = 'PRESENTATION_DECK';
       suggestedArtifactType = 'pptx';
-    } else if (lower.includes('what') || lower.includes('how') || lower.includes('sop') || lower.includes('standard')) {
-      intent = 'KNOWLEDGE_QA';
-      suggestedArtifactType = 'text';
     }
 
     // 2. Build DAG steps based on intent
@@ -232,6 +257,45 @@ export class DynamicAgentPlanner {
             kind: 'document',
             description: 'Synthesize P&ID audit summary and commit to audit chain',
             dependsOn: ['step-4-isolation'],
+            plugins: [],
+            outputSchemaRef: 'DecisionDna',
+            status: 'pending',
+          },
+        ];
+        break;
+
+      case 'DIGITAL_TWIN':
+        steps = [
+          {
+            stepId: 'step-1-model',
+            kind: 'document',
+            description: 'Load the virtual CDU feed-train model (equipment, piping, design envelopes)',
+            dependsOn: [],
+            plugins: [],
+            status: 'pending',
+          },
+          {
+            stepId: 'step-2-simulate',
+            kind: 'calculation',
+            description: 'Execute the what-if scenario against the virtual plant and recompute hydraulics',
+            dependsOn: ['step-1-model'],
+            plugins: ['pipe-calc-plugin'],
+            outputSchemaRef: 'PipePressureDropResponse',
+            status: 'pending',
+          },
+          {
+            stepId: 'step-3-verify',
+            kind: 'document',
+            description: 'Verify simulated state against design pressures and the pump operating envelope',
+            dependsOn: ['step-2-simulate'],
+            plugins: [],
+            status: 'pending',
+          },
+          {
+            stepId: 'step-4-record',
+            kind: 'document',
+            description: 'Render digital twin simulation report and commit Decision DNA',
+            dependsOn: ['step-3-verify'],
             plugins: [],
             outputSchemaRef: 'DecisionDna',
             status: 'pending',

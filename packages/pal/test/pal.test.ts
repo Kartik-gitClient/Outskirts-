@@ -153,7 +153,7 @@ describe('Provider Adapter Layer (PAL)', () => {
               eval_count: 8,
             }));
           }
-          if (body.format === 'json') {
+          if (body.format === 'json' || (body.format && typeof body.format === 'object')) {
             return new Response(JSON.stringify({
               message: { content: JSON.stringify({ status: 'ok', version: 1 }) },
               prompt_eval_count: 15,
@@ -202,7 +202,7 @@ describe('Provider Adapter Layer (PAL)', () => {
               usage: { prompt_tokens: 12, completion_tokens: 8 },
             }));
           }
-          if (body.guided_json) {
+          if (body.guided_json || body.response_format) {
             return new Response(JSON.stringify({
               choices: [{ message: { content: JSON.stringify({ status: 'ok', version: 1 }), role: 'assistant' } }],
               usage: { prompt_tokens: 15, completion_tokens: 10 },

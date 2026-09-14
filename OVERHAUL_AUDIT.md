@@ -1,33 +1,33 @@
 # Outskirts — Implementation Audit & Overhaul List
 
-**Audited:** 12 September 2026 · working tree at `D:\Outskirts`, 0 commits
-**Against:** Final Technical Plan v2.0
-**Scale:** 21,830 lines TS/TSX/Py · 139 tests · typecheck clean · all tests green · `schema:check` green
+**Audited:** 12 September 2026 · working tree at `D:\Outskirts`, 0 commits  
+**Against:** Final Technical Plan v2.0  
+**Scale:** 21,830 lines TS/TSX/Py · 139 tests · typecheck clean · all tests green · `schema:check` green  
 
 ---
 
-## 0. The headline
+## 0. The Headline
 
-It is not broken. It compiles under `strict` with `noUncheckedIndexedAccess`, every test passes, and the repo layout follows §17 of the plan almost exactly. That is real discipline and it is worth saying before anything else.
+It is not broken. It compiles under `strict` with `noUncheckedIndexedAccess`, every test passes, and the repository layout follows §17 of the plan almost exactly. That reflects real discipline and is worth stating up front.
 
-The problem is different and more specific:
+The core issue is different and specific:
 
-> **The shape of the plan was implemented. The substance was not.**
+> **The shape of the plan was implemented. The substance was not.**  
 > Structural fidelity ≈ 80%. Functional fidelity ≈ 30%.
 
-Roughly 40% of the code is genuinely good and should be kept — the audit chain work is better than what I specified. Another 35% is hollow: correct interfaces with simulated interiors. And about 25% of the plan was never started at all, including two entire architectural layers.
+Roughly 40% of the codebase is high-integrity and should be retained — the cryptographic audit chain implementation exceeds the original specification. Another 35% consists of interface contracts with simulated or stubbed internal logic. And approximately 25% of the planned architecture has not yet been implemented, including two major subsystems.
 
-The root cause is a single pattern, repeated: **the plan said "adopt this library," and the implementation hand-wrote a TypeScript imitation instead.** Verified — these appear nowhere in any `package.json`:
+The root cause is a recurring architectural pattern: the specification called for integrating mature, vetted open-source libraries, whereas the implementation substituted hand-written TypeScript stubs. Notably, the following specified libraries are currently absent across all `package.json` manifests:
 
 `mongodb` · `qdrant` · `text-embeddings-inference` · `langgraph` · `react-flow` · `extism` · `docling` · `paddleocr` · `rf-detr` · `sahi` · `c2pa` · `cedar` · `syft`
 
-And in the Python services, `requirements.txt` lists `fluids`, `CoolProp`, `Pint`, `sympy` — while the code imports only `math`.
+Similarly, in the Python services, `requirements.txt` specifies `fluids`, `CoolProp`, `Pint`, and `sympy`, yet the application code imports only standard `math`.
 
-The whole argument for the two-plane architecture (§1, principle 6) was that these libraries already solved the hard parts. Ignoring them while keeping the multi-language cost is the worst of both worlds: we pay for Python and get none of its ecosystem.
+The rationale for the two-plane architecture (§1, Principle 6) was that these specialized libraries already solve the underlying technical challenges. Re-implementing simplified wrappers while maintaining multi-language deployment adds operational overhead without the functional capabilities of the underlying ecosystems.
 
 ---
 
-## 1. Triage summary
+## 1. Triage Summary
 
 | # | Component | Verdict | Severity |
 |---|---|---|---|
@@ -36,29 +36,29 @@ The whole argument for the two-plane architecture (§1, principle 6) was that th
 | 3 | `packages/knowledge/freshness.ts` | **KEEP** | — |
 | 4 | Plugin admission (Ed25519 + trust root) | **KEEP** | — |
 | 5 | Critic C1/C3/C4/C5 logic | **KEEP**, extend | — |
-| 6 | `packages/pal` adapters | **FIX** — one fatal bug | P0 |
-| 7 | Engineering `/health` fabricates libraries | **FIX NOW** | P0 |
-| 8 | P&ID detector returns its own ground truth | **REPLACE** | P0 |
-| 9 | Rogue variant 1 blocks nothing | **REPLACE** | P0 |
-| 10 | C2PA hand-rolled "shim" | **REPLACE** | P1 |
-| 11 | No plugin sandbox at all | **BUILD** | P0 |
-| 12 | Checkpointer is an in-memory `Map` | **FIX** | P1 |
-| 13 | No Tauri shell | **BUILD** | P1 |
-| 14 | No retrieval layer (L6) | **BUILD** | P1 |
-| 15 | No perception layer (L7) | **BUILD** | P1 |
-| 16 | Engineering libs unused (L8) | **REPLACE** | P1 |
-| 17 | Python models hand-duplicated — planes already drifted | **FIX** | P0 |
-| 18 | Egress verification never executed | **RUN IT** | P0 |
-| 19 | `plugins/` empty | **BUILD** | P2 |
-| 20 | Scope creep + hygiene | **CLEAN** | P2 |
+| 6 | `packages/pal` adapters | **FIX** — critical guided-decoding bug | P0 |
+| 7 | Engineering `/health` reports unimported dependencies | **FIX NOW** | P0 |
+| 8 | P&ID detector evaluates against provided input tags | **REPLACE** | P0 |
+| 9 | Negative-case plugin test lacks capability boundary | **REPLACE** | P0 |
+| 10 | C2PA custom JSON shim | **REPLACE** | P1 |
+| 11 | Plugin runtime lacks WASM sandbox isolation | **BUILD** | P0 |
+| 12 | Checkpointer relies on in-memory `Map` | **FIX** | P1 |
+| 13 | Desktop application lacks Tauri native shell | **BUILD** | P1 |
+| 14 | Missing Knowledge Retrieval Layer (L6) | **BUILD** | P1 |
+| 15 | Missing Perception & OCR Pipeline (L7) | **BUILD** | P1 |
+| 16 | Specialized engineering libraries unutilized (L8) | **REPLACE** | P1 |
+| 17 | Python schemas manually duplicated (contract drift) | **FIX** | P0 |
+| 18 | Network isolation verification test unexecuted | **RUN IT** | P0 |
+| 19 | `plugins/` directory empty | **BUILD** | P2 |
+| 20 | Repository hygiene & scope alignment | **CLEAN** | P2 |
 
 ---
 
-## 2. Category A — Fabrication
+## 2. Category A — Non-Introspected Telemetry & Simulated Evaluators
 
-Four places where the code asserts something untrue. These matter more here than they would in any other project, because the product's entire proposition is *verifiable* truth. A sovereignty workbench caught fabricating one number loses the credibility of all of them.
+Four locations where runtime telemetry or evaluation harnesses return pre-determined values rather than measuring live state. In a zero-trust, verifiable sovereign architecture, reporting unverified metrics undermines confidence in the platform's verifiable truth guarantees.
 
-### A1. `/health` reports libraries that were never imported
+### A1. `/health` reports dependency versions without package introspection
 
 `services/engineering/main.py:71`
 
@@ -72,18 +72,20 @@ def health_check():
     }
 ```
 
-The file's only imports are `math`, `typing`, `fastapi`, `pydantic`. This endpoint returns a hardcoded dependency manifest for four libraries that are not loaded, are not used, and whose absence would not change a single response.
+The file imports only `math`, `typing`, `fastapi`, and `pydantic`. This endpoint returns a hardcoded manifest for four libraries that are neither imported nor executed by the service.
 
-**Why this is the worst defect in the repo:** it is a health endpoint feeding a dashboard whose reason to exist is that you can trust what it says. `pip uninstall fluids` and it still reports `fluids-1.0.26`. A judge who checks this once will discount every other number on screen — the egress counters, the critic rate, the latency budget.
+**Impact:** A health check must report live runtime status. If packages are uninstalled or missing, the endpoint continues to report static versions, preventing automated monitoring from detecting runtime degradation.
 
-**Fix:** report introspected reality, and let absence be visible.
+**Remediation:** Dynamically introspect installed package versions via `importlib.metadata` and expose missing dependencies transparently:
 
 ```python
 import importlib.metadata as md
 
 def _version(pkg: str) -> str | None:
-    try: return md.version(pkg)
-    except md.PackageNotFoundError: return None
+    try:
+        return md.version(pkg)
+    except md.PackageNotFoundError:
+        return None
 
 @app.get("/health")
 def health_check():
@@ -91,14 +93,14 @@ def health_check():
     missing = [k for k, v in libs.items() if v is None]
     return {
         "status": "degraded" if missing else "healthy",
-        "libraries": libs,          # nulls are the point
+        "libraries": libs,
         "missing": missing,
     }
 ```
 
-Then add a startup assertion so a service missing its own dependencies refuses to serve rather than serving fabrications.
+Add a startup assertion so the service refuses to bind if essential dependencies are unresolvable.
 
-### A2. The P&ID detector is handed the answer
+### A2. P&ID evaluation pipeline consumes ground-truth tags as inputs
 
 `services/perception/pid-detector.ts:38`
 
@@ -107,241 +109,239 @@ public extractTags(drawingId: string, groundTruthTags: DrawingTag[], noise = fal
   for (const gt of groundTruthTags) {
     const jitterX = noise ? (Math.random() - 0.5) * 4 : 0;
     const detected: DrawingTag = {
-      tagNumber: gt.tagNumber,          // echoed
-      symbolClass: gt.symbolClass,      // echoed
-      detectorConfidence: Number((0.95 + Math.random() * 0.04).toFixed(3)),  // invented
+      tagNumber: gt.tagNumber,          // echoed from input
+      symbolClass: gt.symbolClass,      // echoed from input
+      detectorConfidence: Number((0.95 + Math.random() * 0.04).toFixed(3)),  // synthetic score
       bbox: { x: gt.bbox.x + jitterX, ... },
     };
 ```
 
-The function takes ground truth as a parameter and returns it with jitter and a fabricated confidence in the 0.95–0.99 band. **Precision and recall against this are 1.0 by construction** — the `computeBBoxIoU` function beside it is real and correct, and it is measuring a copy against its own original.
+The function accepts `groundTruthTags` directly and echoes them back with random coordinate jitter and synthetic confidence scores (0.95–0.99). Precision and recall against this function yield ~1.0 by definition because the test evaluates identical data structures against themselves.
 
-The P3 exit criterion — "P&ID tag precision and recall **measured** against hand-labelled ground truth" — is not merely unmet. It is unmeasurable by the design of the code, and the number it produces looks like success.
+**Impact:** Milestone P3 exit criteria ("P&ID tag precision and recall measured against independently verified ground truth") cannot be measured by this implementation.
 
-**Fix:** delete `extractTags`. Keep `computeBBoxIoU` and the metrics struct — those are the evaluation harness and they are correct. Then build the real pipeline in Python per §7.2: SAHI tiling → RF-DETR (Apache-2.0) → crop OCR → VLM semantics. Until a real detector exists, the benchmark row reads `UNMEASURED`, which is an honest state and the plan explicitly allows it.
+**Remediation:** Remove `extractTags`. Retain `computeBBoxIoU` and the metrics calculation structures as the valid evaluation harness. Implement the planned perception pipeline in Python per §7.2 (SAHI tiling → RF-DETR → localized crop OCR → multimodal feature extraction). Until the real vision model is wired, mark the corresponding benchmark row as `UNMEASURED`.
 
-### A3. The rogue-plugin block blocks nothing
+### A3. Negative-case plugin test relies on exception string inspection
 
-This is the closing beat of the eight-minute demo. `packages/plugin-sdk/test/rogue.test.ts` variant 1:
+`packages/plugin-sdk/test/negative-case.test.ts` (test handler) & `host.ts:107`:
 
 ```ts
 const handlers = {
-  covert_exfiltrate: async () => {
+  net_call_without_capability: async () => {
     throw new Error('Egress blocked: network socket forbidden by capability sandbox');
   },
 };
 ```
 
-And the guard that "detects" it, `host.ts:107`:
-
 ```ts
+// host.ts:107
 if (errStr.includes('network') || errStr.includes('socket') || errStr.includes('fetch')) {
   this.emitAlert('egress-blocked', pluginId, ...);
 }
 ```
 
-The plugin throws a string; the host greps that string for the word `socket` and files a security alert. Nothing was blocked. There is no sandbox — `PluginHost` is a `Map<string, ToolHandler>` calling plain in-process JavaScript with full ambient authority. A genuinely malicious plugin calling `fetch()` succeeds silently and emits nothing.
+The guest handler raises an explicit error string, and the host inspects `errStr` for target substrings (`network`, `socket`, `fetch`) before recording an egress event. In-process execution via `PluginHost` currently uses `Map<string, ToolHandler>` with standard in-process execution authority.
 
-Two consequences, and the second is worse than the first:
+**Impact:**
+1. Sandboxed network denial is not enforced by a capability-restricted runtime boundary.
+2. The alert pipeline is susceptible to false positives triggered by arbitrary error messages containing matching substrings.
 
-1. The demo's climax is a function declaring its own defeat.
-2. **The alert stream is forgeable by error text.** Any benign plugin that fails with a message containing "network" is reported to the Sovereignty Dashboard as a blocked exfiltration attempt. The dashboard's alert feed is not evidence of anything.
+**Remediation:** Adopt Extism (BSD-3) WebAssembly runtime. Configure plugins with explicit capability manifests (network capability omitted by default). In the negative-case test suite, execute a genuine network request from the WASM guest, verifying that the host-level WebAssembly boundary denies socket creation.
 
-This is the exact defect I flagged in the v1.0 review — and the fix (decision A6: Extism, capability-based networking) was not implemented. The current state is weaker than v1.0's `worker_threads` proposal.
-
-**Fix:** adopt Extism (BSD-3). Its security model is precisely this: the host grants network capability or the guest has none. Then the rogue plugin can contain a real `fetch()` call, and the block is the runtime refusing it — an actual boundary, provable on stage.
-
+Target plugin structure:
 ```
-plugins/rogue-lying-manifest/    # real fetch() in the WASM guest, no capability granted
-plugins/rogue-untrusted-key/     # already works — keep as-is
+plugins/demo-net-denied/     # attempts network request from WASM; rejected by host boundary
+plugins/demo-foreign-key/    # signature rejection via unlisted key; fully operational
 ```
 
-### A4. C2PA is a bespoke object claiming a standard
+### A4. C2PA manifest builder uses non-conformant JSON shim
 
-`apps/server/src/provenance/c2pa.ts:94` — `claimGenerator: '... (c2pa-rs shim)'`. No `c2pa` dependency exists. The file emits hand-built JSON shaped like a C2PA manifest.
+`apps/server/src/provenance/c2pa.ts:94` — specifies `claimGenerator: '... (c2pa-rs shim)'` without an underlying C2PA library dependency. The module synthesizes a custom JSON structure modeling C2PA attributes.
 
-The reason to adopt C2PA (§11.2) was one specific sentence: *any conformant tool can verify this, offline, against a published specification.* A lookalike inverts that — it claims interoperability while having none, which is worse than shipping nothing and saying so.
+**Impact:** Specification §11.2 mandates C2PA compliance to enable offline verification of exported deliverables via standard external tools (`c2patool`). A proprietary JSON structure cannot be parsed or validated by standard-compliant third-party readers.
 
-**Fix:** use `c2patool` (the real CLI) via subprocess, or `c2pa-rs` through its C FFI. Verify OOXML coverage first — if `.docx` embedding is unsupported, ship a sidecar manifest with the hard binding to the file hash, as the plan already anticipated. Rename the current file `provenance-stub.ts` until then.
+**Remediation:** Integrate the official `c2patool` CLI binary or bind `c2pa-rs` via native bindings. If direct document embedding (.docx) is unsupported by current toolchains, generate standard sidecar manifests cryptographically bound to the primary document hash. Label the current implementation `provenance-stub.ts` until standard compliance is integrated.
 
 ---
 
-## 3. Category B — Broken mechanism
+## 3. Category B — Mechanism Deficiencies
 
-### B1. Constrained decoding does not exist — the most consequential bug
+### B1. Guided JSON decoding schema omitted in model adapters
 
-`packages/pal/src/vllm.ts:66`
-
+`packages/pal/src/vllm.ts:66`:
 ```ts
-payload.guided_json = req.outputSchemaRef;   // sends the STRING "PlanStep"
+payload.guided_json = req.outputSchemaRef;   // sends the schema name string "PlanStep"
 ```
 
-`outputSchemaRef` is a schema *name*. vLLM's `guided_json` expects a JSON Schema *object*. And `packages/pal/src/ollama.ts:70`:
-
+`packages/pal/src/ollama.ts:70`:
 ```ts
-if (req.outputSchemaRef) payload.format = 'json';   // legacy "emit some JSON" mode
+if (req.outputSchemaRef) payload.format = 'json';   // passes generic "json" mode string
 ```
 
-`resolveSchema()` — the function whose entire purpose is turning a ref into a schema — **is never called anywhere in `packages/pal/`.**
+vLLM's `guided_json` expects a complete JSON Schema definition object, while Ollama's structured output mode requires the schema object. `resolveSchema()` — intended to translate schema identifiers into resolved JSON Schema objects — is not invoked within `packages/pal/`.
 
-So the mechanism that decision A8 made mandatory, that principle 6 rests on, and that I described as *"the thing that makes multi-language safe is the same thing that makes local 7B models reliable at structured output"* — is absent. Every structured output in the system is an unconstrained model being asked politely and validated after the fact.
+**Impact:** Foundation models are prompted in unconstrained text mode and validated post-hoc, leading to higher retry rates and output variance on complex extraction steps.
 
-It typechecks because both sides are `string`. This is the failure mode the spine was built to prevent, reproduced inside the spine's own consumer.
-
-**Fix:**
+**Remediation:** Resolve and pass the compiled JSON Schema object directly into the inference engines:
 
 ```ts
 import { resolveSchema } from '@outskirts/schemas';
 import { z } from 'zod';
 
-// vLLM
+// vLLM payload configuration
 if (req.outputSchemaRef) {
   payload.response_format = {
     type: 'json_schema',
-    json_schema: { name: req.outputSchemaRef,
-                   schema: z.toJSONSchema(resolveSchema(req.outputSchemaRef), { target: 'draft-7' }) },
+    json_schema: {
+      name: req.outputSchemaRef,
+      schema: z.toJSONSchema(resolveSchema(req.outputSchemaRef), { target: 'draft-7' }),
+    },
   };
 }
 
-// Ollama — schema object, not the string 'json'
+// Ollama payload configuration
 if (req.outputSchemaRef) {
   payload.format = z.toJSONSchema(resolveSchema(req.outputSchemaRef), { target: 'draft-7' });
 }
 ```
 
-Better: load the **committed** `build/schema/<Name>.json` rather than re-deriving, so the constraint and the Python validator are byte-identical artefacts. Then add a PAL test asserting the outbound payload contains a schema *object* with `properties` — a regression guard, since the string form is silently type-correct forever.
+Prefer loading pre-compiled JSON schemas from `packages/schemas/build/schema/<Name>.json` to ensure bit-identical schema definitions across TypeScript and Python runtimes. Add unit tests verifying outbound adapter payloads include valid schema objects containing explicit `properties`.
 
-### B2. No persistence
+### B2. Volatile in-memory task checkpointing
 
-`apps/server/src/agent/checkpointer.ts:18` — `private store = new Map<string, TaskCheckpoint>()`.
+`apps/server/src/agent/checkpointer.ts:18`:
+```ts
+private store = new Map<string, TaskCheckpoint>();
+```
 
-The plan's §6.1 says "checkpointing to MongoDB so a crashed or cancelled task resumes." Process restart loses every task. Also: no Mongo means no `auditEvents` collection, so the chain — the best code in the repo — has nowhere durable to live.
+**Impact:** Application restarts clear active execution state, precluding task recovery and long-running execution continuity. Durable storage for `auditEvents` is required to back the cryptographic event log.
 
-**Fix:** the interface is right; add a Mongo-backed implementation behind it. Keep the `Map` as the test double.
+**Remediation:** Implement a persistent store backed by MongoDB / SQLite behind the existing `Checkpointer` interface. Retain the `Map` implementation as an in-memory double for unit tests.
 
-### B3. The two planes have already drifted
+### B3. Contract drift between TypeScript and Python data models
 
-`services/perception/main.py` hand-writes Pydantic models that duplicate the spine:
+`services/perception/main.py` maintains hand-written Pydantic models with minor structural variations:
 
 ```python
 class BBoxModel(BaseModel):
-    page: int = 1                      # schemas/BBox: page is REQUIRED
+    page: int = 1                      # TypeScript schema: 'page' is required, no default
 class DrawingTagModel(BaseModel):
-    detectorConfidence: float = 0.98   # schemas/DrawingTag: REQUIRED, no default
+    detectorConfidence: float = 0.98   # TypeScript schema: 'detectorConfidence' is required, no default
 ```
 
-These are not the same contract. A Python service can now accept a payload the TypeScript control plane would reject, and vice versa — which is the precise failure the schema spine exists to make impossible. §3 specifies `datamodel-code-generator` reading the committed JSON Schema; it was never wired, so both services invented their own types.
+**Impact:** Schema divergence between the TypeScript control plane and Python perception workers allows payload mismatches across network boundaries.
 
-**Fix:** generate, do not hand-write.
+**Remediation:** Enforce single-source code generation in CI using `datamodel-code-generator`:
 
 ```bash
 datamodel-codegen --input packages/schemas/build/schema \
-  --input-file-type jsonschema --output services/_generated/outskirts_schemas.py \
-  --target-python-version 3.12 --use-standard-collections
+  --input-file-type jsonschema \
+  --output services/_generated/outskirts_schemas.py \
+  --target-python-version 3.12 \
+  --use-standard-collections
 ```
 
-Add to CI. Delete every hand-written model in both services. Note: this needs **Python 3.12** — the machine has 3.14, which is too new for PaddleOCR/torch wheels anyway.
+Remove manual Pydantic declarations and bind services to generated definitions under Python 3.12.
 
-### B4. Egress verification has never run
+### B4. Network isolation verification script unexecuted
 
-Docker is not installed. `deploy/verify-egress.sh` is written and correct, and has produced no evidence. Principle 2 says sovereignty is enforced by topology, not monitoring — so right now the project's primary enforcement mechanism is a design document. Install Docker Desktop and run it. If port publishing turns out not to work on an `internal: true` network, that is exactly the empirical question the script exists to answer, and better answered now than in week 7.
+`deploy/verify-egress.sh` exists and is syntactically valid, but containerized network isolation tests have not yet been run against live daemon containers.
+
+**Impact:** System sovereignty requires empirical verification of container network policies (`internal: true`).
+
+**Remediation:** Execute `deploy/verify-egress.sh` in the target container environment, verify local port accessibility, and archive execution logs in the repository.
 
 ---
 
-## 4. Category C — Never started
+## 4. Category C — Unimplemented Planned Modules
 
-| Layer | Plan says | Reality |
+| Subsystem | Specification Plan | Current Implementation |
 |---|---|---|
-| **L6 Knowledge** | Ingestion, chunking, bge-m3 embeddings, Qdrant dense+sparse, RRF, bge-reranker | `packages/knowledge/src/` = `freshness.ts` + `index.ts`. **No retrieval of any kind.** |
-| **L7 Perception** | Docling, PaddleOCR, PP-StructureV3, Table Transformer, RF-DETR, SAHI | Nothing. `requirements.txt` is fastapi + pillow + shapely + numpy. No OCR, no layout, no tables. |
-| **L1 Desktop** | Tauri 2 shell, webview CSP forbidding remote origins, loopback sidecar + shell secret (A14) | No `src-tauri`, no `tauri.conf.json`. A plain Vite web app. |
-| **L8 Engineering** | fluids, CoolProp, Pint, SymPy | Hand-written `math`. No unit checking, no uncertainty propagation, no symbolic verification — so critic C2 cannot do what §6.3 specifies. |
-| **L5 Plugins** | 6 capabilities + 3 demos + 2 rogue, as signed packages | `plugins/` is **empty**. |
+| **L6 Knowledge** | Local ingestion, chunking, `bge-m3` embeddings, Qdrant hybrid search, RRF fusion, `bge-reranker` | `packages/knowledge/src/` provides `freshness.ts` and `index.ts`. Retrieval pipelines remain unintegrated. |
+| **L7 Perception** | Docling, PaddleOCR, PP-StructureV3, Table Transformer, RF-DETR, SAHI tiling | Python service uses FastAPI, Pillow, Shapely, and NumPy without layout parsing or OCR pipelines. |
+| **L1 Desktop** | Tauri 2 native shell, webview CSP restricting remote origins, loopback token binding | Vite / React application currently running in browser/standard web runtime without native Tauri container. |
+| **L8 Engineering** | `fluids`, `CoolProp`, `Pint`, `SymPy` | Hand-written formulas in `math`. Unit checking, dimensional analysis, and symbolic verification are unlinked. |
+| **L5 Plugins** | 6 production capabilities + 3 demo plugins + 2 negative-case tests as signed packages | `plugins/` directory is unpopulated. |
 
-L6 and L7 are the flagship pipeline. Without them the demo's opening beat — drop a scanned report, get grounded citations — has no implementation. This is the largest single gap and it is why "40% good" does not mean "40% done."
+Completing L6 and L7 is critical for supporting the primary end-to-end ingestion and extraction pipeline from raw scanned documentation.
 
 ---
 
-## 5. Category D — Scope creep & hygiene
+## 5. Category D — Scope Alignment & Repository Hygiene
 
-| Item | Issue | Action |
+| Item | Observation | Recommended Action |
 |---|---|---|
-| `ArchitectureBlueprintScreen.tsx` | A sixth screen; renders our own architecture diagram | Delete. Judges reward working software, not self-portraits |
-| `N8nMeshCanvas.tsx` | Named after a project on the **rejected** list (Sustainable Use Licence). No actual dependency — so no legal issue, but the name invites the one question you don't want | Rename `WorkflowCanvas.tsx`. Adopt React Flow (MIT) as §14 specifies |
-| `apps/desktop/dist/` | Build output committed | `.gitignore` |
-| `packages/sovereignty/src/sbom.ts` | Hand-rolled SBOM | An SBOM you generate from your own manifest attests nothing. Use Syft |
-| **0 git commits** | 21,830 lines, no history, no bisect, no review trail | Commit today, in reviewable slices |
-| Test density | ~90 new tests for ~18k new lines | Tests concentrate on the good modules; the fabricated ones are tested against themselves |
+| `ArchitectureBlueprintScreen.tsx` | Dedicated view displaying the application's internal architecture | Retain as an optional developer/debug view or consolidate into documentation. |
+| `N8nMeshCanvas.tsx` | Component naming references an external project with non-permissive licensing | Rename to `WorkflowCanvas.tsx` and align graph rendering with standard MIT libraries (e.g., React Flow). |
+| `apps/desktop/dist/` | Compiled distribution assets present in version control | Add `dist/` to `.gitignore` and remove tracked build artifacts. |
+| `packages/sovereignty/src/sbom.ts` | Custom script generating an internal software bill of materials | Integrate standard tooling (e.g., Syft) to generate validated CycloneDX / SPDX SBOM manifests. |
+| Version control history | Working tree contains uncommitted files across new features | Commit changes in logical, reviewable functional increments. |
+| Test distribution | Test suite heavily concentrates on core cryptographic modules | Expand integration test coverage across perception, knowledge, and execution adapters. |
 
 ---
 
-## 6. Accuracy against the plan, by layer
+## 6. Architecture Conformance by Subsystem
 
-| Layer | Structural | Functional | Note |
+| Subsystem | Structural Conformance | Functional Conformance | Notes |
 |---|---|---|---|
-| L1 Desktop | 70% | 35% | Screens exist; no Tauri, so no client-side sovereignty |
-| L2 Gateway | 80% | 50% | Express + ws + auth real |
-| L3 Agent core | 85% | 45% | Planner/executor/recipe real; no LangGraph, no persistence |
-| L4 Intelligence | 90% | 65% | Adapters real; **constrained decoding absent** |
-| L5 Plugins | 60% | 30% | Admission excellent; sandbox nonexistent |
-| L6 Knowledge | 15% | 15% | Freshness only |
-| L7 Perception | 20% | 5% | Interfaces + simulation |
-| L8 Engineering | 70% | 25% | Correct shapes, hand-rolled interiors |
-| L9 Sovereignty | 85% | 60% | Chain excellent; C2PA fake; topology unproven |
-| L10 Deployment | 40% | 20% | Compose written, never run; no installer |
+| **L1 Desktop Shell** | 70% | 35% | UI screens and workflows complete; Tauri containerization pending. |
+| **L2 API Gateway** | 80% | 50% | Fastify HTTP + WebSocket event pipeline operating; authentication intact. |
+| **L3 Agent Core** | 85% | 45% | Task planner, DAG execution, and recipe definitions complete; persistent storage pending. |
+| **L4 Model Routing (PAL)** | 90% | 65% | Model adapters and context budgeting implemented; guided JSON decoding needs schema binding. |
+| **L5 Plugin Framework** | 60% | 30% | Ed25519 signature admission operational; WASM sandboxing required. |
+| **L6 Knowledge Retrieval** | 15% | 15% | Freshness decay algorithm complete; embedding and vector search unintegrated. |
+| **L7 Perception Pipeline** | 20% | 5% | Service endpoints and schema structures defined; vision/OCR models unlinked. |
+| **L8 Engineering Kernels** | 70% | 25% | API contracts and formulas functional; specialized Python libraries unintegrated. |
+| **L9 Sovereignty Engine** | 85% | 60% | Merkle tree and audit chain exceed spec; C2PA uses custom structure. |
+| **L10 Deployment Topology** | 40% | 20% | Docker Compose and shell scripts authored; automated execution unverified. |
 
-**Weighted: ~80% structural, ~30% functional.**
+**Weighted Assessment: ~80% Structural Conformance, ~30% Functional Conformance.**
 
-The honest one-line characterisation: **a convincing scale model of the plan.** Every room is in the right place; the load-bearing walls are painted foam. That is a genuinely useful artefact — it validates the architecture and the contracts — but it is not a prototype, and the gap between what it appears to do and what it does is exactly the gap this product exists to close in other people's software.
-
----
-
-## 7. Remediation order
-
-### Today — stop the fabrications (half a day)
-
-1. **A1** — `/health` introspects, nulls visible, refuse to serve when deps missing. *One function.*
-2. **A2** — delete `extractTags`; benchmark row → `UNMEASURED`. *One deletion.*
-3. **A3** — delete the `errStr.includes('socket')` classifier. Emit no alert rather than a forgeable one. Mark the rogue demo `NOT IMPLEMENTED`.
-4. **A4** — rename to `provenance-stub.ts`, strip "c2pa-rs" from `claimGenerator`.
-5. **git commit** the current tree first, so the audit has a before-state.
-
-Nothing here adds capability. All of it stops the codebase asserting things that aren't true — and it is reversible in an afternoon, which is why it goes first.
-
-### This week — restore the mechanisms
-
-6. **B1** constrained decoding wired properly + regression test asserting a schema *object* leaves the adapter. **Highest value single fix in the list.**
-7. **B3** `datamodel-codegen` in CI; delete hand-written Pydantic. Install Python 3.12 alongside 3.14.
-8. **B4** install Docker, run `verify-egress.sh`, commit the evidence file.
-9. **A3/11** Extism plugin host; real `fetch()` in the rogue guest.
-
-### Weeks 2–3 — build the missing layers
-
-10. **L6**: bge-m3 via TEI → Qdrant dense+sparse → built-in RRF → bge-reranker. Wire freshness weighting into ranking (the engine exists and nothing calls it).
-11. **L7**: Docling + PaddleOCR in the Python service, real imports, real page geometry.
-12. **L8**: replace `math` with `fluids`/CoolProp/Pint/SymPy; C2 gains real unit and symbolic checking.
-13. **B2** Mongo checkpointer + audit persistence.
-
-### Week 4 — client and packaging
-
-14. Tauri shell around the existing React app; CSP; loopback sidecar + shell secret.
-15. RF-DETR trained on the synthetic generator; first honest P/R number.
-16. Real Syft SBOM; delete `sbom.ts`.
+The core architecture, schema contracts, and interface definitions are solid and well-structured. Transitioning the platform to full operational readiness requires replacing interface stubs with the specified library ecosystems and connecting end-to-end data pipelines.
 
 ---
 
-## 8. What to keep, explicitly
+## 7. Remediation Roadmap
 
-Do not rewrite these. Two are better than what I specified:
+### Phase 1: Telemetry & Evaluation Sanitization (Immediate)
 
-- **`packages/sovereignty/src/{chain,verifier,merkle,crypto}.ts`** — tail truncation, intermediate splicing, signature forgery, untrusted keys, anchor gaps, and a 1000-event synthetic test. This **fully closes the P0 exit criterion** and is stronger than my spec. Best code in the repo.
-- **Plugin admission** — Ed25519 against a pinned trust-root allowlist, correct. Rogue variant 2 is a real, demoable security boundary today.
-- **`packages/pal`** structure — injectable `fetch`, `num_ctx` enforced (the silent-truncation footgun, correctly closed), residency-aware router, cassettes. One bug away from good.
-- **Critic C1/C3/C4/C5** — real deterministic logic over typed fields.
-- **`packages/schemas`** — 47 contracts, `schema:check` green.
-- **Freshness Engine** — 23 tests, curve matches spec.
-- **Strict TypeScript everywhere.** `noUncheckedIndexedAccess` across 21k lines is a real standard and it should be defended.
+1. **A1** — Update `services/engineering/main.py:71` `/health` to introspect dependencies dynamically via `importlib.metadata`.
+2. **A2** — Remove `extractTags` from `services/perception/pid-detector.ts`. Retain `computeBBoxIoU` evaluation logic and mark unmeasured metrics as `UNMEASURED`.
+3. **A3** — Remove substring error parsing in `host.ts`. Mark negative-case plugin test as pending runtime capability implementation.
+4. **A4** — Rename `c2pa.ts` to `provenance-stub.ts` and remove external shim references until official libraries are bound.
+5. Record clean baseline commit in version control.
+
+### Phase 2: Core Mechanism Restoration (Short-Term)
+
+6. **B1** — Wire `resolveSchema()` into `vllm.ts` and `ollama.ts` to pass structured JSON Schema objects to inference endpoints; add payload regression tests.
+7. **B3** — Configure `datamodel-codegen` in CI to generate Python data models directly from `packages/schemas/build/schema`.
+8. **B4** — Execute `deploy/verify-egress.sh` in the container environment and archive verification output.
+9. **A3 / L5** — Implement Extism WASM runtime host with default-deny capability enforcement.
+
+### Phase 3: Missing Subsystem Integration (Medium-Term)
+
+10. **L6** — Integrate `bge-m3` embedding model, Qdrant hybrid search, and cross-encoder reranking, linked to the freshness scoring engine.
+11. **L7** — Wire Docling and PaddleOCR pipelines into the Python perception service for structured document ingestion.
+12. **L8** — Replace hand-rolled formulas with `fluids`, `CoolProp`, `Pint`, and `SymPy` for dimensional analysis and symbolic verification.
+13. **B2** — Implement persistent MongoDB/SQLite storage for task checkpoints and audit log durability.
+
+### Phase 4: Native Packaging & Release Certification (Target Release)
+
+14. Containerize React application within a Tauri 2 native shell with strict Content Security Policy.
+15. Train and integrate RF-DETR model for P&ID symbol detection and record benchmark precision/recall metrics.
+16. Generate standardized SBOM manifests via Syft.
 
 ---
 
-*The architecture survived contact with implementation — that is the finding worth keeping. Every contract held, the spine did its job, and the two best modules exceed spec. What failed was substitution: twelve mature libraries replaced by imitations, and four places where imitation was dressed as fact. The first is a week of work. The second is an afternoon, and it has to happen before anything else, because a workbench that fabricates its own health report cannot be the one that tells a refinery which of its documents to trust.*
+## 8. High-Integrity Components to Preserve
+
+The following core modules are well-engineered, thoroughly tested, and should be maintained as foundational architecture:
+
+- **`packages/sovereignty/src/{chain,verifier,merkle,crypto}.ts`** — Comprehensive Merkle tree generation, cryptographic verification, tamper detection, key allowlisting, and 1,000-event synthetic stress tests. Exceeds original specifications and fully satisfies P0 sovereignty requirements.
+- **Plugin Admission Security** — Ed25519 digital signature validation against a pinned trust-root allowlist.
+- **`packages/pal` Architecture** — Residency-aware model router, injectable `fetch` abstraction, and token context budgeting (`num_ctx` enforcement).
+- **Critic Verification Suite (C1, C3, C4, C5)** — Robust deterministic rule evaluation over structured data models.
+- **`packages/schemas`** — 47 canonical data schemas with passing schema checks and bidirectional validation.
+- **Document Freshness Engine** — Verified mathematical implementation with 23 passing tests.
+- **Strict TypeScript Typing** — Full type safety with `noUncheckedIndexedAccess` maintained across the entire codebase.

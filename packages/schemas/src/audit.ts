@@ -6,7 +6,7 @@ import { Id, Iso8601, Seq, Sha256 } from './common.js';
  *
  * A prev-hash chain detects modification but not truncation -- lop off the last
  * forty events and it still verifies. And an unsigned chain stored in the same
- * database the application writes to is tamper-evident only against attackers
+ * database the application writes to is tamper-evident only against external parties
  * who cannot reach the database. Both holes are closed here.
  */
 

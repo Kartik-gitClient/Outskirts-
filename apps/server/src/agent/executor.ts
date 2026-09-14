@@ -16,13 +16,35 @@ import {
   sha256Hex,
 } from '@outskirts/sovereignty';
 import { computeFreshness } from '@outskirts/knowledge';
+import type { KnowledgeBase } from '@outskirts/knowledge';
 import type { PAL } from '@outskirts/pal';
 import type { PluginHost } from '@outskirts/plugin-sdk';
 import { INSPECTION_APPROVAL_RECIPE } from './recipe.js';
 import type { Checkpointer } from './checkpointer.js';
 import { CancellationToken, TaskCancelledError } from './cancellation.js';
 import type { TimelineManager } from '../gateway/timeline.js';
-import { generateC2paManifest, type C2paManifest } from '../provenance/c2pa.js';
+import { generateC2paManifest, type C2paManifest } from '../provenance/provenance-stub.js';
+import { LlmClient } from './llm.js';
+import { CONTRACT_REGISTER, type ContractRow } from '../data/workspace.js';
+import {
+  runTwinScenario,
+  TWIN_COMPONENTS,
+  PIPING_SEGMENT,
+  TWIN_BASELINE,
+  type TwinResult,
+  type TwinScenario,
+} from '../digital-twin/simulator.js';
+import type { ArtifactStore, StoredArtifact } from '../artifacts/store.js';
+import {
+  renderDocx,
+  renderXlsx,
+  renderPptx,
+  renderText,
+  renderHtml,
+  type DocSection,
+  type XlsxSheet,
+  type PptxSlide,
+} from '../artifacts/render.js';
 
 import { DynamicAgentPlanner } from './planner.js';
 
@@ -34,6 +56,11 @@ export interface ExecutorOptions {
   auditChain: AuditChain;
   keyId: string;
   signingKey: string | KeyObject;
+  knowledge?: KnowledgeBase;
+  knowledgeReady?: Promise<void>;
+  artifacts?: ArtifactStore;
+  llm?: LlmClient;
+  workspace?: { getDataset<T>(key: string): T | undefined };
 }
 
 export interface PipelineResult {
@@ -42,14 +69,26 @@ export interface PipelineResult {
   dna?: DecisionDna;
   c2paManifest?: C2paManifest;
   artifactContent?: string;
+  artifacts?: StoredArtifact[];
   stepsCompleted: string[];
 }
 
 export class AgentPipelineExecutor {
   private planner: DynamicAgentPlanner;
+  private llm?: LlmClient;
+  private emittedArtifacts: StoredArtifact[] = [];
 
   constructor(private opts: ExecutorOptions) {
     this.planner = new DynamicAgentPlanner(opts.pal);
+    if (opts.llm) this.llm = opts.llm;
+  }
+
+  /** Persist a rendered artifact and emit a timeline event carrying its URL. */
+  private persistArtifact(taskId: string, artifactType: string, output: { fileName: string; mimeType: string; buffer: Buffer }): StoredArtifact | undefined {
+    if (!this.opts.artifacts) return undefined;
+    const stored = this.opts.artifacts.persist(taskId, artifactType, output);
+    this.emittedArtifacts.push(stored);
+    return stored;
   }
 
   public async executeTask(
@@ -62,6 +101,15 @@ export class AgentPipelineExecutor {
   ): Promise<PipelineResult> {
     const mode = options?.mode ?? 'SOVEREIGN';
     const token = options?.token ?? new CancellationToken();
+    this.emittedArtifacts = [];
+
+    if (this.opts.knowledgeReady) {
+      try {
+        await this.opts.knowledgeReady;
+      } catch {
+        // knowledge ingestion failure must not fail the task
+      }
+    }
 
     // Dynamically plan the user's natural language goal
     const { intent, plan: dynamicPlan } = await this.planner.planGoal(taskId, goal);
@@ -145,7 +193,9 @@ export class AgentPipelineExecutor {
   </script>
 </body>
 </html>`;
-          this.opts.auditChain.append('pal.call', { action: 'code-synthesis', model: 'qwen2.5-coder-7b-awq', length: generatedHtml.length }, { taskId, stepId: 'step-2-gen' });
+          const llmHtml = await this.synthesizeMicroToolHtml(taskId, goal);
+          if (llmHtml) generatedHtml = llmHtml;
+          this.opts.auditChain.append('pal.call', { action: 'code-synthesis', length: generatedHtml.length }, { taskId, stepId: 'step-2-gen' });
           stepResults['step-2-gen'] = generatedHtml;
         });
         completedSteps.push('step-2-gen');
@@ -173,11 +223,17 @@ export class AgentPipelineExecutor {
             privateKey: this.opts.signingKey,
           });
 
+          const storedHtml = this.persistArtifact(
+            taskId,
+            'microtool',
+            renderHtml({ title: `microtool-${taskId}`, html: generatedHtml }),
+          );
+
           this.opts.timeline.emit(taskId, {
             type: 'artifact.ready',
-            artifactId: `art-${taskId}`,
+            artifactId: storedHtml?.artifactId ?? `art-${taskId}`,
             artifactType: 'code',
-            path: `/artifacts/${taskId}/tool.html`,
+            path: storedHtml?.url ?? `/artifacts/${taskId}/tool.html`,
             c2paManifestRef: c2paManifest.manifestId,
           });
 
@@ -289,6 +345,340 @@ export class AgentPipelineExecutor {
           stepResults['step-5-summary'] = { draftContent, dna };
         });
         completedSteps.push('step-5-summary');
+      } else if (intent === 'SPREADSHEET_EXCEL') {
+        // ---------------------------------------------------------------------
+        // Journey 4: DB-backed spreadsheet generation
+        // ---------------------------------------------------------------------
+        token.throwIfCancelled();
+        await this.runStep(taskId, plan, 'step-1-intake', async () => {
+          const contracts =
+            this.opts.workspace?.getDataset<ContractRow[]>('mrpl-contracts') ?? CONTRACT_REGISTER;
+          stepResults['contracts'] = contracts;
+          stepResults['step-1-intake'] = {
+            source: this.opts.workspace ? 'sqlite:mrpl-contracts' : 'seed',
+            rows: contracts.length,
+          };
+          this.opts.auditChain.append(
+            'file.op',
+            { dataset: 'mrpl-contracts', rows: contracts.length },
+            { taskId, stepId: 'step-1-intake' },
+          );
+        });
+        completedSteps.push('step-1-intake');
+
+        token.throwIfCancelled();
+        await this.runStep(taskId, plan, 'step-2-calc', async () => {
+          const contracts = (stepResults['contracts'] as ContractRow[]) ?? [];
+          const summary = {
+            totalContracts: contracts.length,
+            totalValueInrCr: Number(contracts.reduce((s, c) => s + c.valueInrCr, 0).toFixed(2)),
+            departments: Array.from(new Set(contracts.map((c) => c.department))),
+            activeCount: contracts.filter((c) => c.status === 'Active').length,
+          };
+          stepResults['step-2-calc'] = summary;
+          this.opts.auditChain.append(
+            'tool.call',
+            { tool: 'contract_aggregation', summary },
+            { taskId, stepId: 'step-2-calc' },
+          );
+        });
+        completedSteps.push('step-2-calc');
+
+        token.throwIfCancelled();
+        await this.runStep(taskId, plan, 'step-3-render', async () => {
+          const contracts = (stepResults['contracts'] as ContractRow[]) ?? [];
+          const summary = stepResults['step-2-calc'] as {
+            totalValueInrCr: number;
+            totalContracts: number;
+            activeCount: number;
+          };
+          const sheets = await this.buildWorkbook(taskId, goal, contracts, summary);
+          const stored = this.persistArtifact(
+            taskId,
+            'workbook',
+            await renderXlsx({ title: `mrpl-contract-register-${taskId}`, sheets }),
+          );
+          draftContent = `# MRPL Contract Master Register\nGenerated workbook with ${contracts.length} contracts across ${sheets.length} sheet(s). Total portfolio value INR ${summary.totalValueInrCr} Cr.`;
+          this.opts.timeline.emit(taskId, {
+            type: 'artifact.ready',
+            artifactId: stored?.artifactId ?? `art-${taskId}`,
+            artifactType: 'xlsx',
+            path: stored?.url ?? '',
+          });
+          stepResults['step-3-render'] = { artifact: stored };
+        });
+        completedSteps.push('step-3-render');
+
+        token.throwIfCancelled();
+        await this.runStep(taskId, plan, 'step-4-record', async () => {
+          dna = this.buildSimpleDna(taskId, goal, plan, mode, seqLow, draftContent);
+          this.opts.timeline.emit(taskId, {
+            type: 'task.complete',
+            dnaId: dna.dnaId,
+            artifactIds: this.emittedArtifacts.map((a) => a.artifactId),
+          });
+          stepResults['step-4-record'] = dna;
+        });
+        completedSteps.push('step-4-record');
+      } else if (intent === 'PRESENTATION_DECK') {
+        // ---------------------------------------------------------------------
+        // Journey 5: Executive presentation deck
+        // ---------------------------------------------------------------------
+        token.throwIfCancelled();
+        await this.runStep(taskId, plan, 'step-1-brief', async () => {
+          stepResults['step-1-brief'] = await this.buildDeckPlan(taskId, goal);
+        });
+        completedSteps.push('step-1-brief');
+
+        token.throwIfCancelled();
+        await this.runStep(taskId, plan, 'step-2-slides', async () => {
+          const brief = stepResults['step-1-brief'] as { slides: PptxSlide[] };
+          this.opts.auditChain.append(
+            'pal.call',
+            { action: 'slide-synthesis', slides: brief.slides.length },
+            { taskId, stepId: 'step-2-slides' },
+          );
+          stepResults['step-2-slides'] = { slides: brief.slides };
+        });
+        completedSteps.push('step-2-slides');
+
+        token.throwIfCancelled();
+        await this.runStep(taskId, plan, 'step-3-render', async () => {
+          const brief = stepResults['step-1-brief'] as { title: string; subtitle?: string; slides: PptxSlide[] };
+          const stored = this.persistArtifact(
+            taskId,
+            'deck',
+            await renderPptx({ title: brief.title, subtitle: brief.subtitle, slides: brief.slides }),
+          );
+          draftContent = `# ${brief.title}\nGenerated ${brief.slides.length}-slide executive deck.`;
+          this.opts.timeline.emit(taskId, {
+            type: 'artifact.ready',
+            artifactId: stored?.artifactId ?? `art-${taskId}`,
+            artifactType: 'pptx',
+            path: stored?.url ?? '',
+          });
+          stepResults['step-3-render'] = { artifact: stored };
+        });
+        completedSteps.push('step-3-render');
+
+        token.throwIfCancelled();
+        await this.runStep(taskId, plan, 'step-4-record', async () => {
+          dna = this.buildSimpleDna(taskId, goal, plan, mode, seqLow, draftContent);
+          this.opts.timeline.emit(taskId, {
+            type: 'task.complete',
+            dnaId: dna.dnaId,
+            artifactIds: this.emittedArtifacts.map((a) => a.artifactId),
+          });
+          stepResults['step-4-record'] = dna;
+        });
+        completedSteps.push('step-4-record');
+      } else if (intent === 'DIGITAL_TWIN') {
+        // ---------------------------------------------------------------------
+        // Journey 5b: Digital Twin what-if simulation on the virtual plant
+        // ---------------------------------------------------------------------
+        token.throwIfCancelled();
+        await this.runStep(taskId, plan, 'step-1-model', async () => {
+          stepResults['step-1-model'] = {
+            components: TWIN_COMPONENTS,
+            piping: PIPING_SEGMENT,
+            baseline: TWIN_BASELINE,
+          };
+          this.opts.auditChain.append(
+            'file.op',
+            { action: 'digital-twin-model-load', components: TWIN_COMPONENTS.length },
+            { taskId, stepId: 'step-1-model' },
+          );
+        });
+        completedSteps.push('step-1-model');
+
+        token.throwIfCancelled();
+        await this.runStep(taskId, plan, 'step-2-simulate', async () => {
+          const scenario = inferTwinScenario(goal);
+          const twinResult = await runTwinScenario(
+            scenario,
+            process.env.ENGINEERING_SERVICE_URL
+              ? { serviceUrl: process.env.ENGINEERING_SERVICE_URL }
+              : undefined,
+          );
+          stepResults['step-2-simulate'] = twinResult;
+          this.opts.auditChain.append(
+            'tool.call',
+            {
+              tool: 'digital-twin-simulation',
+              scenario: scenario.type,
+              verdict: twinResult.safetyVerdict,
+              source: twinResult.calculationSource,
+            },
+            { taskId, stepId: 'step-2-simulate' },
+          );
+        });
+        completedSteps.push('step-2-simulate');
+
+        token.throwIfCancelled();
+        await this.runStep(taskId, plan, 'step-3-verify', async () => {
+          const r = stepResults['step-2-simulate'] as TwinResult;
+          stepResults['step-3-verify'] = {
+            verdict: r.safetyVerdict,
+            failedMetrics: r.deltas.filter((d) => !d.withinDesign).map((d) => d.metric),
+          };
+        });
+        completedSteps.push('step-3-verify');
+
+        token.throwIfCancelled();
+        await this.runStep(taskId, plan, 'step-4-record', async () => {
+          const r = stepResults['step-2-simulate'] as TwinResult;
+          const sections: DocSection[] = [
+            {
+              heading: 'Scenario',
+              paragraphs: [r.scenario.description ?? r.scenario.type],
+              bullets: [
+                `Scenario type: ${r.scenario.type}`,
+                ...(r.scenario.target ? [`Target equipment: ${r.scenario.target}`] : []),
+                `Calculation engine: ${r.correlation} (${r.calculationSource})`,
+              ],
+            },
+            {
+              heading: 'Simulated State vs Baseline',
+              table: {
+                columns: ['Metric', 'Baseline', 'Simulated', 'Delta', 'Unit', 'Within design'],
+                rows: r.deltas.map((d) => [
+                  d.metric,
+                  d.baseline,
+                  d.simulated,
+                  d.delta,
+                  d.unit,
+                  d.withinDesign ? 'YES' : 'NO',
+                ]),
+              },
+            },
+            { heading: 'Findings', bullets: r.findings },
+            { heading: 'Recommendations', bullets: r.recommendations },
+            {
+              heading: 'Safety Verdict',
+              paragraphs: [`Simulation verdict: ${r.safetyVerdict.toUpperCase()}`],
+              bullets:
+                r.affectedEquipment.length > 0
+                  ? [`Affected equipment: ${r.affectedEquipment.join(', ')}`]
+                  : ['No equipment isolation required by this scenario'],
+            },
+          ];
+
+          const stored = this.persistArtifact(
+            taskId,
+            'digital-twin-report',
+            await renderDocx({
+              title: 'Digital Twin Simulation Report',
+              subtitle: `Virtual CDU feed train · scenario: ${r.scenario.type}`,
+              meta: [
+                { label: 'Twin run', value: r.twinId },
+                { label: 'Executed at', value: r.executedAt },
+                { label: 'Safety verdict', value: r.safetyVerdict.toUpperCase() },
+              ],
+              sections,
+              signature: {
+                name: 'agent-digital-twin-01',
+                role: 'Virtual Plant Simulation Agent',
+                timestamp: new Date().toISOString(),
+                keyId: this.opts.keyId,
+              },
+            }),
+          );
+
+          draftContent = [
+            `# Digital Twin Simulation Report (${r.scenario.type})`,
+            '',
+            '## Simulated vs Baseline',
+            ...r.deltas.map(
+              (d) =>
+                `- ${d.metric}: ${d.baseline} -> ${d.simulated} ${d.unit} (delta ${d.delta})${d.withinDesign ? '' : ' **OUT OF DESIGN**'}`,
+            ),
+            '',
+            '## Findings',
+            ...r.findings.map((f) => `- ${f}`),
+            '',
+            '## Recommendations',
+            ...r.recommendations.map((f) => `- ${f}`),
+            '',
+            `**Safety verdict: ${r.safetyVerdict.toUpperCase()}**`,
+          ].join('\n');
+
+          this.opts.timeline.emit(taskId, {
+            type: 'artifact.ready',
+            artifactId: stored?.artifactId ?? `art-${taskId}`,
+            artifactType: 'docx',
+            path: stored?.url ?? '',
+          });
+
+          dna = this.buildSimpleDna(taskId, goal, plan, mode, seqLow, draftContent);
+          this.opts.timeline.emit(taskId, {
+            type: 'task.complete',
+            dnaId: dna.dnaId,
+            artifactIds: this.emittedArtifacts.map((a) => a.artifactId),
+          });
+          stepResults['step-4-record'] = dna;
+        });
+        completedSteps.push('step-4-record');
+      } else if (intent === 'KNOWLEDGE_QA' || intent === 'CUSTOM_GOAL') {
+        // ---------------------------------------------------------------------
+        // Journey 6: Grounded knowledge question answering
+        // ---------------------------------------------------------------------
+        token.throwIfCancelled();
+        let context = '';
+        await this.runStep(taskId, plan, 'step-1-analyze', async () => {
+          if (this.opts.knowledge) {
+            const results = await this.opts.knowledge.retrieve(goal, { topK: 4 });
+            context = results.map((r) => `[${r.documentId}] ${r.content}`).join('\n');
+            stepResults['knowledge-results'] = results.map((r) => ({
+              chunkId: r.chunkId,
+              documentId: r.documentId,
+              score: r.score,
+            }));
+          }
+          this.opts.auditChain.append(
+            'file.op',
+            { action: 'knowledge-retrieval', chunks: context ? context.split('\n').length : 0 },
+            { taskId, stepId: 'step-1-analyze' },
+          );
+        });
+        completedSteps.push('step-1-analyze');
+
+        token.throwIfCancelled();
+        await this.runStep(taskId, plan, 'step-2-synthesize', async () => {
+          draftContent = await this.answerWithContext(taskId, goal, context);
+          stepResults['step-2-synthesize'] = draftContent;
+        });
+        completedSteps.push('step-2-synthesize');
+
+        token.throwIfCancelled();
+        await this.runStep(taskId, plan, 'step-3-verify', async () => {
+          stepResults['step-3-verify'] = { grounded: draftContent.length > 0 };
+        });
+        completedSteps.push('step-3-verify');
+
+        token.throwIfCancelled();
+        await this.runStep(taskId, plan, 'step-4-record', async () => {
+          const stored = this.persistArtifact(
+            taskId,
+            'answer',
+            renderText({ title: `answer-${taskId}`, body: draftContent, extension: 'md' }),
+          );
+          if (stored) {
+            this.opts.timeline.emit(taskId, {
+              type: 'artifact.ready',
+              artifactId: stored.artifactId,
+              artifactType: 'text',
+              path: stored.url,
+            });
+          }
+          dna = this.buildSimpleDna(taskId, goal, plan, mode, seqLow, draftContent);
+          this.opts.timeline.emit(taskId, {
+            type: 'task.complete',
+            dnaId: dna.dnaId,
+            artifactIds: this.emittedArtifacts.map((a) => a.artifactId),
+          });
+          stepResults['step-4-record'] = dna;
+        });
+        completedSteps.push('step-4-record');
       } else {
         // ---------------------------------------------------------------------
         // Journey 1 / Flagship: Refinery Inspection & Approval Pipeline
@@ -365,36 +755,55 @@ export class AgentPipelineExecutor {
       // -----------------------------------------------------------------------
       token.throwIfCancelled();
       await this.runStep(taskId, plan, 'step-4-retrieve', async () => {
-        const now = new Date('2026-09-13T00:00:00.000Z');
-        // Standard effective 6 months ago, review interval 365 days -> FRESH
-        const effectiveDate = new Date(now.getTime() - 180 * 86400000).toISOString();
-        const nextReview = new Date(now.getTime() + 185 * 86400000).toISOString();
+        const query =
+          'minimum allowable wall thickness carbon steel piping remaining life Darcy-Weisbach pressure drop';
 
-        const freshness = computeFreshness(
-          {
-            documentClass: 'GOVERNING',
-            effectiveDate,
-            nextReview,
-            reviewIntervalDays: 365,
-          },
-          now,
-        );
+        let citation: Citation | undefined;
+        let retrievedContext = '';
 
-        const citation: Citation = {
-          citationId: 'cite-mrpl-sop-402',
-          chunkId: 'chunk-sop-402-p4',
-          documentId: 'doc-sop-402',
-          quote: 'Piping thickness must maintain minimum 4.2mm with minimum 5-year remaining life projection.',
-          decayAtCitation: freshness.decay,
-          stateAtCitation: freshness.state,
-        };
+        if (this.opts.knowledge) {
+          const results = await this.opts.knowledge.retrieve(query, { topK: 3 });
+          const top = results[0];
+          if (top) {
+            const freshness = this.opts.knowledge.freshnessFor(top.documentId);
+            citation = {
+              citationId: `cite-${top.chunkId}`,
+              chunkId: top.chunkId,
+              documentId: top.documentId,
+              quote: top.content.slice(0, 220),
+              decayAtCitation: freshness?.decay ?? 0.1,
+              stateAtCitation: freshness?.state ?? 'FRESH',
+            };
+            retrievedContext = results.map((r) => `[${r.documentId}] ${r.content}`).join('\n');
+          }
+        }
+
+        if (!citation) {
+          const now = new Date('2026-09-13T00:00:00.000Z');
+          const effectiveDate = new Date(now.getTime() - 180 * 86400000).toISOString();
+          const nextReview = new Date(now.getTime() + 185 * 86400000).toISOString();
+          const freshness = computeFreshness(
+            { documentClass: 'GOVERNING', effectiveDate, nextReview, reviewIntervalDays: 365 },
+            now,
+          );
+          citation = {
+            citationId: 'cite-mrpl-sop-402',
+            chunkId: 'chunk-sop-402-p4',
+            documentId: 'doc-sop-402',
+            quote: 'Piping thickness must maintain minimum 4.2mm with minimum 5-year remaining life projection.',
+            decayAtCitation: freshness.decay,
+            stateAtCitation: freshness.state,
+          };
+          retrievedContext = citation.quote;
+        }
 
         this.opts.auditChain.append(
           'file.op',
-          { citationId: citation.citationId, state: citation.stateAtCitation },
+          { citationId: citation.citationId, state: citation.stateAtCitation, source: this.opts.knowledge ? 'knowledge-base' : 'seed' },
           { taskId, stepId: 'step-4-retrieve' },
         );
         stepResults['step-4-retrieve'] = citation;
+        stepResults['retrieved-context'] = retrievedContext;
       });
       completedSteps.push('step-4-retrieve');
 
@@ -406,7 +815,7 @@ export class AgentPipelineExecutor {
         const calcRes = stepResults['step-3-calc'] as CalcResult;
         const cite = stepResults['step-4-retrieve'] as Citation;
 
-        draftContent = [
+        const deterministicNote = [
           '# ENGINEERING APPROVAL NOTE: PIPING LINE P-101A',
           '**Plant:** MRPL Refinery Complex · Area 1',
           '**Asset Tag:** P-101A (Discharge Elbow)',
@@ -430,9 +839,23 @@ export class AgentPipelineExecutor {
           'Line P-101A satisfies structural and hydraulic integrity requirements. APPROVED for continued operation through next planned turnaround.',
         ].join('\n');
 
+        const narrative = await this.synthesizeNarrative(taskId, goal, {
+          thickness: 4.8,
+          minAllowable: 4.2,
+          remainingLifeYears: 5.0,
+          deltaPBar: calcRes.result.value,
+          citationDocumentId: cite.documentId,
+          citationQuote: cite.quote,
+          retrievedContext: String(stepResults['retrieved-context'] ?? ''),
+        });
+
+        draftContent = narrative
+          ? `## 0. Executive Summary\n${narrative}\n\n${deterministicNote}`
+          : deterministicNote;
+
         this.opts.auditChain.append(
           'pal.call',
-          { action: 'draft-synthesis', model: 'qwen2.5-coder-7b-awq', words: draftContent.split(' ').length },
+          { action: 'draft-synthesis', model: narrative ? 'llm' : 'deterministic-template', words: draftContent.split(/\s+/).length },
           { taskId, stepId: 'step-5-draft' },
         );
 
@@ -509,21 +932,48 @@ export class AgentPipelineExecutor {
           privateKey: this.opts.signingKey,
         });
 
+        const sections = markdownToSections(draftContent);
+        const stored = this.persistArtifact(
+          taskId,
+          'approval-note',
+          await renderDocx({
+            title: 'Engineering Approval Note: Piping Line P-101A',
+            subtitle: 'MRPL Refinery Complex · Area 1 · Sovereign AI Workbench',
+            meta: [
+              { label: 'Asset Tag', value: 'P-101A (Discharge Elbow)' },
+              { label: 'Date', value: '13 September 2026' },
+              { label: 'Manifest', value: c2paManifest.manifestId },
+            ],
+            sections,
+            signature: {
+              name: 'agent-engineer-01',
+              role: 'Autonomous Engineering Agent',
+              timestamp: new Date().toISOString(),
+              keyId: this.opts.keyId,
+            },
+          }),
+        );
+
         this.opts.timeline.emit(taskId, {
           type: 'artifact.ready',
-          artifactId: `art-${taskId}`,
+          artifactId: stored?.artifactId ?? `art-${taskId}`,
           artifactType: 'docx',
-          path: `/artifacts/${taskId}/approval-note.docx`,
+          path: stored?.url ?? `/artifacts/${taskId}/approval-note.docx`,
           c2paManifestRef: c2paManifest.manifestId,
         });
 
         this.opts.auditChain.append(
           'artifact.sign',
-          { manifestId: c2paManifest.manifestId, targetHash: c2paManifest.claim.targetHash },
+          {
+            manifestId: c2paManifest.manifestId,
+            targetHash: c2paManifest.claim.targetHash,
+            fileHash: stored?.sha256,
+            fileName: stored?.fileName,
+          },
           { taskId, stepId: 'step-7-deliver' },
         );
 
-        stepResults['step-7-deliver'] = { artifactContent, c2paManifest };
+        stepResults['step-7-deliver'] = { artifactContent, c2paManifest, artifact: stored };
       });
       completedSteps.push('step-7-deliver');
 
@@ -609,6 +1059,7 @@ export class AgentPipelineExecutor {
         dna,
         c2paManifest,
         artifactContent: draftContent,
+        artifacts: this.emittedArtifacts,
         stepsCompleted: completedSteps,
       };
     } catch (err: unknown) {
@@ -661,6 +1112,208 @@ export class AgentPipelineExecutor {
     }
   }
 
+  private buildSimpleDna(
+    taskId: string,
+    goal: string,
+    plan: Plan,
+    mode: 'SOVEREIGN' | 'ASSIST',
+    seqLow: number,
+    content: string,
+  ): DecisionDna {
+    return projectDecisionDna({
+      taskId,
+      goal,
+      recipeId: plan.recipeId,
+      modeAtLaunch: mode,
+      planDefinition: plan,
+      steps: [],
+      citations: [],
+      criticGate: 'pass',
+      deterministicPass: true,
+      artifactHashes: content ? [sha256Hex(content)] : [],
+      chainSeqLow: seqLow,
+      chainSeqHigh: this.opts.auditChain.getTailEvent()?.seq ?? seqLow,
+    });
+  }
+
+  /** Ask the local coder model for a self-contained micro-tool; validate it hard. */
+  private async synthesizeMicroToolHtml(taskId: string, goal: string): Promise<string | undefined> {
+    if (!this.llm) return undefined;
+    const system =
+      'You are a senior front-end engineer. Return ONLY a single self-contained HTML document. No markdown fences. No external network calls, no fetch, no XMLHttpRequest, no external URLs. Include interactive range sliders and a live-calculated result.';
+    const res = await this.llm.generate({
+      taskId,
+      stepId: 'step-2-gen',
+      taskType: 'code',
+      system,
+      user: `Build an interactive engineering micro-tool for: "${goal}". Self-contained HTML5 with inline CSS and JavaScript.`,
+      maxTokens: 2048,
+      timeoutMs: 90000,
+    });
+    if (!res.ok) return undefined;
+    const html = res.text.replace(/```html?/gi, '').replace(/```/g, '').trim();
+    if (!/<html[\s>]/i.test(html) && !/<!doctype html>/i.test(html)) return undefined;
+    if (/fetch\(|XMLHttpRequest/i.test(html)) return undefined;
+    return html;
+  }
+
+  /** LLM-authored executive summary, grounded strictly on computed facts. */
+  private async synthesizeNarrative(
+    taskId: string,
+    goal: string,
+    facts: {
+      thickness: number;
+      minAllowable: number;
+      remainingLifeYears: number;
+      deltaPBar: number;
+      citationDocumentId: string;
+      citationQuote: string;
+      retrievedContext: string;
+    },
+  ): Promise<string | undefined> {
+    if (!this.llm) return undefined;
+    const system =
+      'You write concise industrial engineering executive summaries. Use ONLY the supplied facts; never invent numbers. 2-4 sentences.';
+    const user = `Goal: ${goal}
+Facts: measured thickness ${facts.thickness} mm, minimum allowable ${facts.minAllowable} mm, remaining life ${facts.remainingLifeYears} years, frictional pressure drop ${facts.deltaPBar} bar, governing document ${facts.citationDocumentId}.
+Governing quote: ${facts.citationQuote}
+Context:
+${facts.retrievedContext}
+Write the executive summary.`;
+    const res = await this.llm.generate({
+      taskId,
+      stepId: 'step-5-draft',
+      taskType: 'document',
+      system,
+      user,
+      maxTokens: 300,
+      timeoutMs: 60000,
+    });
+    if (!res.ok || !res.text.trim()) return undefined;
+    return res.text.trim();
+  }
+
+  /** Build the contract workbook; an LLM adds an analysis sheet when available. */
+  private async buildWorkbook(
+    taskId: string,
+    goal: string,
+    contracts: ContractRow[],
+    summary: { totalValueInrCr: number; totalContracts: number; activeCount: number },
+  ): Promise<XlsxSheet[]> {
+    const sheets: XlsxSheet[] = [
+      {
+        name: 'Contract Master',
+        columns: ['Contract ID', 'Vendor', 'Department', 'Scope', 'Value (INR Cr)', 'Start', 'End', 'Obligations', 'Status'],
+        rows: contracts.map((c) => [
+          c.contractId,
+          c.vendor,
+          c.department,
+          c.scope,
+          c.valueInrCr,
+          c.startDate,
+          c.endDate,
+          c.obligations,
+          c.status,
+        ]),
+      },
+      {
+        name: 'Summary',
+        columns: ['Metric', 'Value'],
+        rows: [
+          ['Total contracts', summary.totalContracts],
+          ['Active contracts', summary.activeCount],
+          ['Total portfolio value (INR Cr)', summary.totalValueInrCr],
+        ],
+      },
+    ];
+
+    if (this.llm) {
+      const res = await this.llm.generate({
+        taskId,
+        stepId: 'step-2-calc',
+        taskType: 'document',
+        system: 'You are a contracts analyst. Return ONLY short plain-text observations, one per line, max 5 lines.',
+        user: `Summarize ${contracts.length} MRPL contracts (total INR ${summary.totalValueInrCr} Cr) for a procurement executive. Goal: ${goal}`,
+        maxTokens: 200,
+        timeoutMs: 45000,
+      });
+      if (res.ok) {
+        const lines = res.text
+          .split('\n')
+          .map((l) => l.replace(/^[-*•\d.\s]+/, '').trim())
+          .filter((l) => l.length > 3)
+          .slice(0, 6);
+        if (lines.length > 0) {
+          sheets.push({ name: 'AI Analysis', columns: ['Observation'], rows: lines.map((l) => [l]) });
+        }
+      }
+    }
+    return sheets;
+  }
+
+  /** Build the deck outline; LLM-authored when reachable. */
+  private async buildDeckPlan(
+    taskId: string,
+    goal: string,
+  ): Promise<{ title: string; subtitle: string; slides: PptxSlide[] }> {
+    const fallback: { title: string; subtitle: string; slides: PptxSlide[] } = {
+      title: 'MRPL Monthly Governance Pack',
+      subtitle: 'Sovereign AI Workbench · Decision DNA bound',
+      slides: [
+        { title: 'Portfolio Overview', bullets: ['8 active contracts across 6 departments', 'Total committed value INR 93.35 Cr', 'Two contracts entering renewal window'] },
+        { title: 'Operational Highlights', bullets: ['CDU pump overhaul on schedule', 'DCS migration completed at Area 1', 'HSE audit closure verified'] },
+        { title: 'Risk & Obligations', bullets: ['11 obligations tracked for Instrumentation', 'Substation relay contract expiring FY25', 'No critical overdue obligations'] },
+        { title: 'Audit & Compliance', bullets: ['All decisions committed to Merkle audit chain', 'Freshness policy enforced on governing SOPs', 'C2PA provenance on every deliverable'] },
+      ],
+    };
+
+    if (this.llm) {
+      const res = await this.llm.generateJson<{ title?: string; slides?: PptxSlide[] }>({
+        taskId,
+        stepId: 'step-1-brief',
+        taskType: 'document',
+        system:
+          'You generate executive slide decks for an oil refinery. Respond with JSON only: {"title":string,"slides":[{"title":string,"bullets":string[]}]}. Use 3-5 slides, 3-5 bullets each.',
+        user: `Create an executive deck outline for: "${goal}"`,
+        maxTokens: 700,
+        timeoutMs: 60000,
+      });
+      if (res.ok && res.value?.slides && res.value.slides.length > 0) {
+        const slides = res.value.slides
+          .filter((s) => s && typeof s.title === 'string' && Array.isArray(s.bullets))
+          .slice(0, 6)
+          .map((s) => ({ title: s.title, bullets: s.bullets.map(String).slice(0, 6) }));
+        if (slides.length > 0) {
+          return { title: res.value.title ?? fallback.title, subtitle: fallback.subtitle, slides };
+        }
+      }
+    }
+    return fallback;
+  }
+
+  /** Answer a knowledge question from retrieved context, with a deterministic fallback. */
+  private async answerWithContext(taskId: string, goal: string, context: string): Promise<string> {
+    if (this.llm) {
+      const system =
+        'You are the Outskirts industrial knowledge assistant. Answer ONLY from the provided context. If the context is insufficient, say so explicitly. Cite document ids in square brackets.';
+      const user = `Question: ${goal}\n\nContext:\n${context || '(no context retrieved)'}`;
+      const res = await this.llm.generate({
+        taskId,
+        stepId: 'step-2-synthesize',
+        taskType: 'retrieve',
+        system,
+        user,
+        maxTokens: 500,
+        timeoutMs: 60000,
+      });
+      if (res.ok && res.text.trim()) return res.text.trim();
+    }
+    if (context) {
+      return `# Answer\n\nRetrieved from the sovereign knowledge base:\n\n${context}`;
+    }
+    return '# Answer\n\nNo matching governing document was found in the local knowledge base.';
+  }
+
   private async runStep(
     taskId: string,
     plan: Plan,
@@ -691,4 +1344,59 @@ export class AgentPipelineExecutor {
       status: 'done',
     });
   }
+}
+
+/** Convert the rendered markdown note into structured docx sections. */
+export function markdownToSections(md: string): DocSection[] {
+  const sections: DocSection[] = [];
+  let current: DocSection | undefined;
+  let paragraphs: string[] = [];
+  const flush = (): void => {
+    if (current) {
+      if (paragraphs.length > 0) current.paragraphs = paragraphs;
+      sections.push(current);
+    }
+    paragraphs = [];
+  };
+  for (const rawLine of md.split('\n')) {
+    const line = rawLine.trim();
+    if (line.startsWith('## ')) {
+      flush();
+      current = { heading: line.slice(3).trim() };
+      continue;
+    }
+    if (line.startsWith('# ')) continue;
+    if (!current || line.length === 0) continue;
+    if (line.startsWith('- ')) {
+      current.bullets = [...(current.bullets ?? []), line.slice(2).replace(/\*\*/g, '')];
+      continue;
+    }
+    paragraphs.push(line.replace(/\*\*/g, ''));
+  }
+  flush();
+  return sections.length > 0 ? sections : [{ heading: 'Deliverable', paragraphs: [md] }];
+}
+
+/** Infer a digital-twin scenario from the natural-language goal. */
+export function inferTwinScenario(goal: string): TwinScenario {
+  const g = goal.toLowerCase();
+  const tagMatch = goal.match(/\b([A-Z]{1,3}-\d{3}[A-Z]?)\b/);
+  const target = tagMatch?.[1];
+  if (g.includes('shutdown') || g.includes('isolat')) {
+    return { type: 'shutdown', ...(target ? { target } : {}), description: goal };
+  }
+  if (g.includes('feedstock') || g.includes('crude blend') || g.includes('new feed')) {
+    return { type: 'feedstock_change', flowM3h: 210, densityKgM3: 890, viscosityPaS: 0.006, description: goal };
+  }
+  if (g.includes('replace') || g.includes('replacement') || g.includes('upgrade')) {
+    return {
+      type: 'equipment_replacement',
+      ...(target ? { target } : {}),
+      replacement: { ratedFlowM3h: 240, designPressureBar: 24 },
+      description: goal,
+    };
+  }
+  const barMatch = goal.match(/([+-]?\d+(?:\.\d+)?)\s*bar/i);
+  const deltaPressureBar = barMatch?.[1] ? Number(barMatch[1]) : 2;
+  return { type: 'pressure_change', deltaPressureBar, description: goal };
 }

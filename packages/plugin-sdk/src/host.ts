@@ -98,15 +98,15 @@ export class PluginHost {
     }
 
     // 2. Execute within capability bounds
+    // NOTE: Capability enforcement is pending Extism WASM runtime integration.
+    // Until then, execution errors are propagated without egress classification.
+    // The substring-based alert heuristic was removed because it produced
+    // false positives from arbitrary error messages.
     let rawOutput: unknown;
     try {
       rawOutput = await handler(inputValidation.data);
     } catch (err: unknown) {
-      // Check if error is network attempt
       const errStr = err instanceof Error ? err.message : String(err);
-      if (errStr.includes('network') || errStr.includes('socket') || errStr.includes('fetch')) {
-        this.emitAlert('egress-blocked', pluginId, plugin.manifest.version, errStr);
-      }
       throw new PluginExecutionError(pluginId, toolName, `Execution failed: ${errStr}`);
     }
 

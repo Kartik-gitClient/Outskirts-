@@ -15,57 +15,17 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, rmSync
 import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { z } from 'zod';
 
-import { SCHEMA_REGISTRY } from '../src/index.js';
+import { SCHEMA_REGISTRY, JSON_SCHEMA_OPTS, toJsonSchema } from '../src/index.js';
+import type { ZodType } from 'zod';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = join(HERE, '..', 'build', 'schema');
 
 const checkMode = process.argv.includes('--check');
 
-/**
- * io: 'input' is deliberate.
- *
- * A field with .default() is required on output but optional on input. The
- * model producing this object is the input side -- forcing it to emit fields
- * that have defaults would waste tokens and invite refusals for no benefit.
- */
-const TO_JSON_SCHEMA_OPTS = {
-  target: 'draft-7',
-  io: 'input',
-  unrepresentable: 'any',
-  reused: 'inline',
-} as const;
-
 function canonical(obj: unknown): string {
   return JSON.stringify(obj, null, 2) + '\n';
-}
-
-/**
- * Force every object node closed.
- *
- * Zod's default object mode strips unknown keys rather than rejecting them, so
- * with io:'input' the emitted schema leaves additionalProperties unconstrained.
- * That is defensible for validation and wrong for our primary consumer: a
- * decoding constraint with open objects lets the model invent fields, which is
- * exactly the failure we adopted constrained decoding to eliminate.
- *
- * Nodes that already declare additionalProperties -- z.record(), for instance,
- * which is how AuditEvent.payload stays deliberately open -- are left alone.
- */
-function closeObjects(node: unknown): unknown {
-  if (Array.isArray(node)) return node.map(closeObjects);
-  if (node === null || typeof node !== 'object') return node;
-
-  const obj = node as Record<string, unknown>;
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(obj)) out[k] = closeObjects(v);
-
-  if (out['type'] === 'object' && 'properties' in out && !('additionalProperties' in out)) {
-    out['additionalProperties'] = false;
-  }
-  return out;
 }
 
 function sha256(s: string): string {
@@ -74,17 +34,23 @@ function sha256(s: string): string {
 
 type Generated = { name: string; body: string; hash: string };
 
+/**
+ * Conversion lives in src/jsonschema.ts, not here.
+ *
+ * The PAL calls the same function to build its decoding constraint, so the
+ * artefact Python validates against and the schema the model is sampled into
+ * are the same bytes by construction rather than by discipline.
+ */
 function generateAll(): Generated[] {
   const out: Generated[] = [];
-  for (const [name, schema] of Object.entries(SCHEMA_REGISTRY)) {
-    let json: unknown;
+  for (const name of Object.keys(SCHEMA_REGISTRY)) {
+    let json: Record<string, unknown>;
     try {
-      json = z.toJSONSchema(schema, TO_JSON_SCHEMA_OPTS);
+      json = toJsonSchema((SCHEMA_REGISTRY as Record<string, ZodType>)[name]!);
     } catch (err) {
       throw new Error(`Failed to convert schema "${name}": ${(err as Error).message}`);
     }
-    const closed = closeObjects(json);
-    const body = canonical({ $id: `https://outskirts.local/schema/${name}.json`, ...(closed as object) });
+    const body = canonical({ $id: `https://outskirts.local/schema/${name}.json`, ...json });
     out.push({ name, body, hash: sha256(body) });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
@@ -93,8 +59,8 @@ function generateAll(): Generated[] {
 function buildIndex(generated: Generated[]): string {
   return canonical({
     generator: 'packages/schemas/scripts/generate.ts',
-    target: TO_JSON_SCHEMA_OPTS.target,
-    io: TO_JSON_SCHEMA_OPTS.io,
+    target: JSON_SCHEMA_OPTS.target,
+    io: JSON_SCHEMA_OPTS.io,
     count: generated.length,
     schemas: generated.map(({ name, hash }) => ({ name, file: `${name}.json`, sha256: hash })),
   });

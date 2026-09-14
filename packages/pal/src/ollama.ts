@@ -8,6 +8,7 @@ import type {
   TrustBoundary,
 } from '@outskirts/schemas';
 import type { ProviderAdapter, ChatResponse, StreamChunk } from './adapter.js';
+import { ollamaFormat } from './constraint.js';
 
 export interface OllamaAdapterOptions {
   baseUrl?: string;
@@ -66,9 +67,9 @@ export class OllamaAdapter implements ProviderAdapter {
       options,
     };
 
-    // If outputSchemaRef is present, guided JSON decoding is enforced
+    // Schema object, not the string 'json' -- the latter constrains syntax only.
     if (req.outputSchemaRef) {
-      payload.format = 'json';
+      payload.format = ollamaFormat(req.outputSchemaRef);
     }
 
     const res = await this.fetch(`${this.baseUrl}/api/chat`, {
@@ -123,7 +124,7 @@ export class OllamaAdapter implements ProviderAdapter {
     };
 
     if (req.outputSchemaRef) {
-      payload.format = 'json';
+      payload.format = ollamaFormat(req.outputSchemaRef);
     }
 
     const res = await this.fetch(`${this.baseUrl}/api/chat`, {

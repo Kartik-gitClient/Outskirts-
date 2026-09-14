@@ -27,3 +27,7 @@ deploy/captures/
 
 # build output
 apps/desktop/dist/
+
+# local sovereign runtime state
+apps/server/data/
+apps/server/artifacts-data/

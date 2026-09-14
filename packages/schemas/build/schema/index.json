@@ -212,7 +212,7 @@
     {
       "name": "ServerEvent",
       "file": "ServerEvent.json",
-      "sha256": "dce0673aa5f0952d79d9bc85d50da22aea7d787e4a85194e562a33050b6d06c8"
+      "sha256": "fb2bf5aaa9c297b251e3301acbb214b568cfb03b9b910535cfe2e96a5603b50a"
     },
     {
       "name": "StepStatus",

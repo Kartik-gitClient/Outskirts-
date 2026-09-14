@@ -17,7 +17,10 @@
     "@outskirts/plugin-sdk": "workspace:*",
     "@outskirts/schemas": "workspace:*",
     "@outskirts/sovereignty": "workspace:*",
+    "docx": "^9.7.1",
+    "exceljs": "^4.4.0",
     "express": "^4.21.2",
+    "pptxgenjs": "^4.0.1",
     "ws": "^8.18.0",
     "zod": "^4.0.0"
   },

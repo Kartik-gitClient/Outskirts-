@@ -76,7 +76,7 @@ describe('Desktop Client: 5 Zustand Slices & UI State Machines (Section 14)', ()
       seq: 1 as any,
       ts: '2026-09-13T14:00:00Z',
       kind: 'egress-attempt-blocked' as any,
-      pluginId: 'rogue-plugin',
+      pluginId: 'demo-unauthorized-plugin',
       pluginVersion: '1.0.0',
       detail: 'Network socket blocked',
     });

@@ -9,7 +9,7 @@ import {
 } from '../packages/pal/src/index.js';
 import { verifyChain } from '../packages/sovereignty/src/index.js';
 import { computeFreshness, requiresAcknowledgement } from '../packages/knowledge/src/index.js';
-import { verifyC2paManifest } from '../apps/server/src/provenance/c2pa.js';
+import { verifyC2paManifest } from '../apps/server/src/provenance/provenance-stub.js';
 
 interface FlowTestResult {
   flowName: string;
