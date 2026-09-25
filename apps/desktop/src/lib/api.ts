@@ -23,6 +23,20 @@ export interface HealthReport {
   devicePlacement?: string;
 }
 
+export interface ModelEntry {
+  modelId: string;
+  providerId: string;
+  locality: string;
+  trustBoundary: string;
+  taskTypes?: string[];
+  capabilities?: string[];
+  contextWindow?: number;
+  quality?: number;
+  quantisation?: string;
+  status: string;
+  pinned?: boolean;
+}
+
 export interface ProviderInfo {
   mode: string;
   nimModel: string;
@@ -90,6 +104,12 @@ export interface TaskResult {
   artifactContent?: string;
   stepsCompleted?: string[];
   artifacts: ArtifactInfo[];
+}
+
+export interface SimAiExplanation {
+  model: string;
+  source: 'llm' | 'fallback';
+  text: string;
 }
 
 export interface Equipment {
@@ -168,9 +188,23 @@ export interface BlueprintQueryResult {
   dischargeValves?: string[];
 }
 
+export interface BlueprintOps {
+  addNodes: Array<{ tag?: string; symbolClass: string }>;
+  connect: Array<{ from: string; to: string }>;
+  removeNodes: string[];
+  reply: string;
+  source: 'llm' | 'parser';
+}
+
 export const api = {
   health: () => req<Record<string, unknown>>('/health'),
   providers: () => req<ProviderInfo>('/api/providers'),
+  models: () => req<{ mode: string; models: ModelEntry[]; preferredModel?: string | null }>('/api/models'),
+  setPreferredModel: (modelId: string) =>
+    req<{ preferredModel: string | null; mode?: 'SOVEREIGN' | 'ASSIST' }>('/api/models/preferred', {
+      method: 'POST',
+      body: JSON.stringify({ modelId }),
+    }),
   setMode: (mode: 'SOVEREIGN' | 'ASSIST') =>
     req<{ mode: string }>('/api/mode', { method: 'POST', body: JSON.stringify({ mode }) }),
   configureNim: (apiKey: string) =>
@@ -188,14 +222,66 @@ export const api = {
   knowledgeSearch: (q: string) =>
     req<{ query: string; results: KnowledgeChunk[] }>(`/api/knowledge/search?q=${encodeURIComponent(q)}`),
 
-  startTask: (goal: string, mode?: string) =>
-    req<{ taskId: string }>('/api/tasks', { method: 'POST', body: JSON.stringify({ goal, mode }) }),
+  assistant: (
+    messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+    contextTaskId?: string,
+  ) =>
+    req<{
+      mode: 'chat' | 'task';
+      content?: string;
+      model?: string;
+      taskId?: string;
+      wsUrl?: string;
+    }>('/api/assistant', {
+      method: 'POST',
+      body: JSON.stringify({ messages, ...(contextTaskId ? { contextTaskId } : {}) }),
+    }),
+
+  startTask: (goal: string, mode?: string, contextTaskId?: string) =>
+    req<{ taskId: string; wsUrl: string }>('/api/tasks', {
+      method: 'POST',
+      body: JSON.stringify({ goal, mode, ...(contextTaskId ? { contextTaskId } : {}) }),
+    }),
   taskResult: (taskId: string) => req<TaskResult>(`/api/tasks/${taskId}/result`),
+  taskEvents: (taskId: string, since: number) =>
+    req<{ taskId: string; since: number; events: ServerEvent[] }>(`/api/tasks/${taskId}/events?since=${since}`),
   cancelTask: (taskId: string) => req<unknown>(`/api/tasks/${taskId}/cancel`, { method: 'POST' }),
   taskArtifacts: (taskId: string) => req<{ artifacts: ArtifactInfo[] }>(`/api/tasks/${taskId}/artifacts`),
   allArtifacts: () => req<{ artifacts: ArtifactInfo[] }>('/api/artifacts'),
 
   equipment: () => req<{ equipment: Equipment[] }>('/api/equipment'),
+  simInterpret: (facts: {
+    tag: string;
+    equipmentType: string;
+    category: string;
+    manufacturer?: string;
+    service?: string;
+    inputs: Record<string, string | number>;
+    outputs: Array<{ name: string; value: number; unit: string }>;
+    warnings: string[];
+    correlation: string;
+    source: string;
+  }) =>
+    req<SimAiExplanation>('/api/machine-sim/interpret', {
+      method: 'POST',
+      body: JSON.stringify({ facts }),
+    }),
+  simDiagnose: (facts: {
+    tag: string;
+    equipmentType: string;
+    category: string;
+    manufacturer?: string;
+    service?: string;
+    inputs: Record<string, string | number>;
+    outputs: Array<{ name: string; value: number; unit: string }>;
+    warnings: string[];
+    correlation: string;
+    source: string;
+  }) =>
+    req<SimAiExplanation>('/api/machine-sim/diagnose', {
+      method: 'POST',
+      body: JSON.stringify({ facts }),
+    }),
   simulateEquipment: (equipmentId: string, overrides: Record<string, number>) =>
     req<EquipmentSim>('/api/machine-sim/equipment', {
       method: 'POST',
@@ -216,8 +302,19 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ documentId, blueprint }),
     }),
+  blueprintAi: (
+    prompt: string,
+    nodes: Array<{ id: string; tagNumber: string; symbolClass: string }>,
+    edges: Array<{ from: string; to: string }>,
+  ) =>
+    req<{ ops: BlueprintOps }>('/api/blueprint/ai', {
+      method: 'POST',
+      body: JSON.stringify({ prompt, nodes, edges }),
+    }),
 
   artifactUrl: (url: string) => `${BASE}${url}`,
+  artifactPreview: (artifactId: string) =>
+    req<{ previewType: 'html'; html: string }>(`/api/artifacts/${encodeURIComponent(artifactId)}/preview`),
   wsUrl: (taskId: string) => {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${proto}//${window.location.host}/ws?taskId=${encodeURIComponent(taskId)}`;

@@ -1,4 +1,6 @@
 import express from 'express';
+import fs from 'node:fs';
+import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import {
@@ -38,7 +40,11 @@ import { simulateEquipment } from './machine-sim/equipment-model.js';
 import { EQUIPMENT_CATALOG, categoryOf, type EquipmentRecord } from './data/equipment.js';
 import { SqliteStore, SqliteCheckpointer } from './store/sqlite.js';
 import { ArtifactStore } from './artifacts/store.js';
+import { renderArtifactPreview, readArtifactFile } from './artifacts/preview.js';
 import { LlmClient } from './agent/llm.js';
+import { planBlueprintOps } from './agent/blueprint-ai.js';
+import { explainSimulation, diagnoseWarnings, type SimFactSheet } from './agent/machine-ai.js';
+import { isSmallTalk } from './agent/planner.js';
 import { WORKSPACE_DATASETS } from './data/workspace.js';
 import {
   runTwinScenario,
@@ -58,7 +64,10 @@ const LOCAL_CODER_MODEL = 'qwen2.5-coder-1.5b-local';
 const LOCAL_LARGE_GENERAL_MODEL = 'qwen2.5-7b-instruct-local';
 const LOCAL_LARGE_CODER_MODEL = 'qwen2.5-coder-7b-local';
 const LOCAL_REASONING_MODEL = 'deepseek-r1-14b-local';
-const NIM_MODEL_ID = process.env.NIM_MODEL ?? 'meta/llama-3.1-8b-instruct';
+// NVIDIA end-of-lifed meta/llama-3.1-8b on 2026-08-26; gemma-4-31b-it is the
+// current clean-instruct default on the live NIM catalog (verified with a key).
+const NIM_MODEL_ID = process.env.NIM_MODEL ?? 'google/gemma-4-31b-it';
+const NIM_FAST_MODEL_ID = 'nvidia/nemotron-3.5-lightning-30b-a3b';
 
 function baseLocalEntry(overrides: Record<string, unknown>): Record<string, unknown> {
   return {
@@ -117,23 +126,31 @@ function registerLocalModels(pal: PAL): void {
     }),
   ];
 
-  // NVIDIA NIM demonstration model (ASSIST mode; outside perimeter).
-  localModels.push({
-    modelId: NIM_MODEL_ID,
-    providerId: 'nim',
-    locality: 'internet',
-    trustBoundary: 'outside-perimeter',
-    taskTypes: ['code', 'document', 'vision', 'calculation', 'retrieve'],
-    capabilities: ['text', 'vision', 'tool-use', 'guided-json', 'seeded', 'streaming'],
-    modelDigest: `sha256:nim-${NIM_MODEL_ID.replace(/[^a-z0-9]/gi, '-')}`,
-    quantisation: 'none',
-    contextWindow: 128000,
-    quality: 0.97,
-    estLoadS: 0,
-    pinned: false,
-    status: 'enabled',
-    license: 'NVIDIA NIM Terms',
-  });
+  // NVIDIA NIM demonstration models (ASSIST mode; outside perimeter).
+  // Only models verified reachable on the live catalog are registered —
+  // NVIDIA EOLs dated models aggressively (410 Gone).
+  const nimModels: Array<{ modelId: string; quality: number; taskTypes: string[] }> = [
+    { modelId: NIM_MODEL_ID, quality: 0.96, taskTypes: ['code', 'document', 'vision', 'calculation', 'retrieve'] },
+    { modelId: NIM_FAST_MODEL_ID, quality: 0.94, taskTypes: ['document', 'retrieve', 'calculation'] },
+  ];
+  for (const m of nimModels) {
+    localModels.push({
+      modelId: m.modelId,
+      providerId: 'nim',
+      locality: 'internet',
+      trustBoundary: 'outside-perimeter',
+      taskTypes: m.taskTypes,
+      capabilities: ['text', 'vision', 'tool-use', 'guided-json', 'seeded', 'streaming'],
+      modelDigest: `sha256:nim-${m.modelId.replace(/[^a-z0-9]/gi, '-')}`,
+      quantisation: 'none',
+      contextWindow: 128000,
+      quality: m.quality,
+      estLoadS: 0,
+      pinned: false,
+      status: 'enabled',
+      license: 'NVIDIA NIM Terms',
+    });
+  }
 
   for (const entry of localModels) {
     pal.getRegistry().register(entry);
@@ -148,8 +165,13 @@ function planModelChain(pal: PAL, taskType: string): string[] {
     : taskType === 'calculation'
       ? [LOCAL_GENERAL_MODEL, LOCAL_REASONING_MODEL, LOCAL_LARGE_GENERAL_MODEL]
       : [LOCAL_GENERAL_MODEL, LOCAL_LARGE_GENERAL_MODEL];
-  const nimConfigured = Boolean(process.env.NIM_API_KEY || process.env.OPENAI_API_KEY);
-  const nim = [NIM_MODEL_ID, 'external-assist-frontier'].filter((id) => pal.getRegistry().get(id));
+  const nimConfigured = Boolean(
+    process.env.NIM_API_KEY ||
+      process.env.OPENAI_API_KEY ||
+      (pal.getAdapter('nim') as NimAdapter | undefined)?.isConfigured(),
+  );
+  // Fast lightning model first (free-tier latency), clean gemma as quality fallback.
+  const nim = [NIM_FAST_MODEL_ID, NIM_MODEL_ID].filter((id) => pal.getRegistry().get(id));
 
   if (pal.getMode() === 'ASSIST' && nimConfigured) {
     return [...nim, ...local];
@@ -211,6 +233,30 @@ export function createServer(options?: CreateServerOptions): ServerContext {
   const checkpointer = new SqliteCheckpointer(store);
   const artifacts = new ArtifactStore(store);
 
+  // Persisted operator settings (perimeter mode survives gateway restarts,
+  // so the demo stays in ASSIST once NIM is configured).
+  const settingsPath =
+    store.filePath !== ':memory:' && store.filePath.length > 0
+      ? path.join(path.dirname(store.filePath), 'settings.json')
+      : undefined;
+  const loadSettings = (): { mode?: 'SOVEREIGN' | 'ASSIST' } => {
+    if (!settingsPath) return {};
+    try {
+      return JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as { mode?: 'SOVEREIGN' | 'ASSIST' };
+    } catch {
+      return {};
+    }
+  };
+  const saveSettings = (patch: { mode?: 'SOVEREIGN' | 'ASSIST' }): void => {
+    if (!settingsPath) return;
+    try {
+      fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+      fs.writeFileSync(settingsPath, JSON.stringify({ ...loadSettings(), ...patch }, null, 2));
+    } catch {
+      /* best-effort persistence */
+    }
+  };
+
   // Seed the local document corpus and workspace data on first boot.
   for (const ds of WORKSPACE_DATASETS) {
     store.seedDatasetIfEmpty(ds.key, ds.payload);
@@ -228,6 +274,10 @@ export function createServer(options?: CreateServerOptions): ServerContext {
   })();
 
   const pal = new PAL({ mode: 'SOVEREIGN' });
+  const persistedSettings = loadSettings();
+  if (persistedSettings.mode === 'ASSIST' || persistedSettings.mode === 'SOVEREIGN') {
+    pal.setMode(persistedSettings.mode);
+  }
   pal.registerAdapter(new VllmAdapter());
   pal.registerAdapter(new OllamaAdapter());
   pal.registerAdapter(new NimAdapter());
@@ -400,6 +450,39 @@ export function createServer(options?: CreateServerOptions): ServerContext {
     }
   });
 
+  // AI explanation of a completed run (grounded on the computed values only).
+  // Requires an online model — no canned fallback is ever served.
+  app.post('/api/machine-sim/interpret', async (req, res) => {
+    try {
+      const facts = req.body?.facts as SimFactSheet;
+      if (!facts || !Array.isArray(facts.outputs) || typeof facts.tag !== 'string') {
+        res.status(400).json({ error: 'facts { tag, outputs[], inputs, warnings[], ... } required' });
+        return;
+      }
+      const explanation = await explainSimulation(facts, llm);
+      auditChain.append('tool.call', { tool: 'sim-interpret', equipment: facts.tag, source: explanation.source });
+      res.json(explanation);
+    } catch (err: unknown) {
+      res.status(503).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // AI diagnosis of the active warnings of a completed run.
+  app.post('/api/machine-sim/diagnose', async (req, res) => {
+    try {
+      const facts = req.body?.facts as SimFactSheet;
+      if (!facts || !Array.isArray(facts.warnings) || typeof facts.tag !== 'string') {
+        res.status(400).json({ error: 'facts { tag, warnings[], ... } required' });
+        return;
+      }
+      const diagnosis = await diagnoseWarnings(facts, llm);
+      auditChain.append('tool.call', { tool: 'sim-diagnose', equipment: facts.tag, warnings: facts.warnings.length, source: diagnosis.source });
+      res.json(diagnosis);
+    } catch (err: unknown) {
+      res.status(503).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   // --- Blueprint Mesh (real P&ID graph) ------------------------------------
   app.get('/api/blueprint/graph', (req, res) => {
     const itemCount = Number(req.query.itemCount ?? 12);
@@ -441,6 +524,40 @@ export function createServer(options?: CreateServerOptions): ServerContext {
     const sheet = generateSyntheticPidSheet({ itemCount, sheetId: documentId });
     const graph = new PidProcessGraph(sheet.groundTruth);
     res.json({ documentId, ...graph.query(question) });
+  });
+
+  // AI graph construction: natural-language build instructions turn into
+  // node/edge operations on the editable blueprint mesh.
+  app.post('/api/blueprint/ai', async (req, res) => {
+    const prompt = String(req.body?.prompt ?? '').trim();
+    if (!prompt) {
+      res.status(400).json({ error: 'prompt is required' });
+      return;
+    }
+    const nodes = Array.isArray(req.body?.nodes) ? req.body.nodes : [];
+    const edges = Array.isArray(req.body?.edges) ? req.body.edges : [];
+    try {
+      const ops = await planBlueprintOps(
+        prompt,
+        nodes.map((n: { id?: unknown; tagNumber?: unknown; symbolClass?: unknown }) => ({
+          id: String(n.id ?? n.tagNumber ?? ''),
+          tagNumber: String(n.tagNumber ?? n.id ?? ''),
+          symbolClass: String(n.symbolClass ?? 'pressure-vessel'),
+        })),
+        edges.map((e: { from?: unknown; to?: unknown }) => ({ from: String(e.from ?? ''), to: String(e.to ?? '') })),
+        llm,
+      );
+      auditChain.append('tool.call', {
+        tool: 'blueprint-ai',
+        source: ops.source,
+        added: ops.addNodes.length,
+        connected: ops.connect.length,
+        removed: ops.removeNodes.length,
+      });
+      res.json({ ops });
+    } catch (err: unknown) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   app.get('/api/blueprint/load', (req, res) => {
@@ -518,12 +635,59 @@ export function createServer(options?: CreateServerOptions): ServerContext {
     res.json({ taskId: String(req.params.id), artifacts: artifacts.list(String(req.params.id)) });
   });
 
+  // Convert any stored artifact into a self-contained HTML preview
+  // (xlsx sheets, docx text, pptx outline, html/svg/md/json pass-through).
+  app.get('/api/artifacts/:artifactId/preview', (req, res) => {
+    const stored = artifacts.getArtifact(String(req.params.artifactId));
+    if (!stored || !stored.filePath) {
+      res.status(404).json({ error: `Artifact "${req.params.artifactId}" not found` });
+      return;
+    }
+    try {
+      const buffer = readArtifactFile(stored.filePath);
+      void renderArtifactPreview(stored.fileName, buffer).then((p) => res.json(p));
+    } catch (err: unknown) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   // --- PAL Model Registry & Mode (Section 7.1 & TDD Section 4) -------------
   app.get('/api/models', (_req, res) => {
     res.json({
       mode: pal.getMode(),
       models: pal.getRegistry().getAll(),
+      preferredModel: llm.getPreferredModel(),
     });
+  });
+
+  // Operator model picker: pin one model for all LLM work, or revert to auto.
+  app.post('/api/models/preferred', (req, res) => {
+    const modelId = req.body?.modelId;
+    if (modelId === null || modelId === '') {
+      llm.setPreferredModel(null);
+      auditChain.append('guard.alert', { action: 'model-preferred-clear' });
+      res.json({ preferredModel: null });
+      return;
+    }
+    const entry = pal.getRegistry().get(String(modelId));
+    if (!entry) {
+      res.status(404).json({ error: `Model "${modelId}" not registered` });
+      return;
+    }
+    // An outside-perimeter pick opens the perimeter: the operator is sovereign,
+    // so the switch is honored and recorded on the audit chain rather than refused.
+    if (pal.getMode() === 'SOVEREIGN' && entry.trustBoundary === 'outside-perimeter') {
+      pal.setMode('ASSIST');
+      saveSettings({ mode: 'ASSIST' });
+      auditChain.append('guard.alert', {
+        action: 'perimeter-opened-by-model-pick',
+        model: entry.modelId,
+        reason: 'operator selected an outside-perimeter model',
+      });
+    }
+    llm.setPreferredModel(entry.modelId);
+    auditChain.append('guard.alert', { action: 'model-preferred-set', model: entry.modelId });
+    res.json({ preferredModel: entry.modelId, mode: pal.getMode() });
   });
 
   app.get('/api/providers', async (_req, res) => {
@@ -556,6 +720,7 @@ export function createServer(options?: CreateServerOptions): ServerContext {
     const targetMode = req.body?.mode;
     if (targetMode === 'SOVEREIGN' || targetMode === 'ASSIST') {
       pal.setMode(targetMode);
+      saveSettings({ mode: targetMode });
       auditChain.append('guard.alert', { action: 'mode-switch', mode: targetMode });
       res.json({ success: true, mode: pal.getMode() });
     } else {
@@ -652,14 +817,77 @@ export function createServer(options?: CreateServerOptions): ServerContext {
     res.json(result);
   });
 
+  // --- Assistant router ------------------------------------------------------
+  // Direct, deterministic dispatch — no classifier model in the loop.
+  // Greetings and chit-chat stay conversational; everything else is run as
+  // an audited pipeline task. The connectors + chat suggestions advertise
+  // what the workbench can do.
+  app.post('/api/assistant', auth.requirePermission('task.create'), async (req, res) => {
+    const history = (
+      req.body?.messages as Array<{ role: 'user' | 'assistant'; content: string }> ?? []
+    ).filter((m) => m && typeof m.content === 'string' && (m.role === 'user' || m.role === 'assistant')).slice(-12);
+    const goal = [...history].reverse().find((m) => m.role === 'user')?.content.trim();
+    if (!goal) {
+      res.status(400).json({ error: 'messages[] with at least one user message required' });
+      return;
+    }
+    const contextTaskId = (req.body?.contextTaskId as string) || undefined;
+    const mode = pal.getMode();
+
+    // Conversational path: greetings, thanks, small talk.
+    if (isSmallTalk(goal)) {
+      let content: string | undefined;
+      let chatModel: string | undefined;
+      if (llm.isConfigured()) {
+        const r = await llm.generate({
+          taskId: `chat-${randomUUID().slice(0, 8)}`,
+          stepId: 'chat',
+          taskType: 'document',
+          system:
+            'You are the Outskirts sovereign AI workbench assistant at an oil refinery. Reply conversationally in 1-3 short sentences. Never dump document text; never mention pipelines or routing.',
+          user: goal,
+          maxTokens: 200,
+          timeoutMs: 60000,
+        });
+        if (r.ok && r.text.trim()) {
+          content = r.text.trim();
+          chatModel = r.model;
+        }
+      }
+      res.json({
+        mode: 'chat',
+        content:
+          content ??
+          'Assistant model is offline. Enable a local model or configure the assist provider in the admin console, then try again.',
+        ...(chatModel ? { model: chatModel } : {}),
+      });
+      return;
+    }
+
+    // Everything else is a real task — direct execution, no classifying.
+    const taskId = `task-${randomUUID().slice(0, 8)}`;
+    const token = new CancellationToken();
+    const promise = executor.executeTask(taskId, goal, { mode, token, contextTaskId });
+    promise
+      .then((result) => taskResults.set(taskId, result))
+      .catch(() => {
+        /* failure surfaced through timeline + checkpoint */
+      });
+    activeTasks.set(taskId, { token, promise });
+    res.json({ mode: 'task', taskId, wsUrl: `/ws?taskId=${taskId}` });
+  });
+
   // Launch a new pipeline task
   app.post('/api/tasks', auth.requirePermission('task.create'), (req, res) => {
     const taskId = (req.body?.taskId as string) || `task-${randomUUID().slice(0, 8)}`;
     const goal = (req.body?.goal as string) || 'Refinery Piping Inspection Approval';
     const mode = (req.body?.mode as 'SOVEREIGN' | 'ASSIST') || 'SOVEREIGN';
+    // Conversation context: the previous task whose data a follow-up
+    // ("visualize this data") should operate on.
+    const contextTaskId = (req.body?.contextTaskId as string) || undefined;
 
     const token = new CancellationToken();
-    const promise = executor.executeTask(taskId, goal, { mode, token });
+    const promise = executor.executeTask(taskId, goal, { mode, token, contextTaskId });
     promise
       .then((result) => taskResults.set(taskId, result))
       .catch(() => {

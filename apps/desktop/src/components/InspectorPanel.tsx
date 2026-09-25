@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type ArtifactInfo } from '../lib/api.js';
 import type { ChatMessage } from '../lib/useWorkbench.js';
 
@@ -28,10 +28,44 @@ function kindOf(a: ArtifactInfo): string {
 
 export const InspectorPanel: React.FC<InspectorProps> = ({ message, allArtifacts, notificationsCount }) => {
   const [preview, setPreview] = useState<string | null>(null);
+  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
+  const openPreview = useCallback((artifactId: string) => {
+    if (preview === artifactId) {
+      setPreview(null);
+      setPreviewHtml(null);
+      setPreviewError(null);
+      return;
+    }
+    setPreview(artifactId);
+    setPreviewHtml(null);
+    setPreviewError(null);
+    setLoadingPreview(true);
+    api
+      .artifactPreview(artifactId)
+      .then((p) => setPreviewHtml(p.html))
+      .catch((e) => setPreviewError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoadingPreview(false));
+  }, [preview]);
 
   const artifacts = message?.artifacts ?? [];
-  const steps = message?.plan ?? [];
+  const steps = Array.isArray(message?.plan) ? message.plan : [];
   const doneSteps = steps.filter((s) => (message?.stepStatus?.[s.stepId] ?? s.status) === 'done').length;
+
+  // The newest artifact of this chat — previewed by default when it changes.
+  const visibleArtifacts = artifacts.length > 0 ? artifacts : allArtifacts;
+  const latestArtifactId = visibleArtifacts[0]?.artifactId ?? null;
+  const autoOpenedRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (latestArtifactId && autoOpenedRef.current !== latestArtifactId) {
+      autoOpenedRef.current = latestArtifactId;
+      openPreview(latestArtifactId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestArtifactId]);
 
   return (
     <aside className="inspector">
@@ -67,13 +101,12 @@ export const InspectorPanel: React.FC<InspectorProps> = ({ message, allArtifacts
 
         {artifacts.length === 0 && allArtifacts.length > 0 && (
           <div className="hint" style={{ marginBottom: 10 }}>
-            Latest generated artifacts across all runs:
+            Artifacts from this session:
           </div>
         )}
 
-        {(artifacts.length > 0 ? artifacts : allArtifacts.slice(0, 4)).map((a) => {
+        {visibleArtifacts.map((a) => {
           const kind = kindOf(a);
-          const previewable = kind === 'html' || kind === 'svg' || kind === 'markdown' || kind === 'json';
           return (
             <div className="artifact" key={a.artifactId}>
               <div className="artifact-head">
@@ -84,18 +117,27 @@ export const InspectorPanel: React.FC<InspectorProps> = ({ message, allArtifacts
                   {kind}
                 </span>
               </div>
-              {preview === a.artifactId && previewable && (
-                <iframe className="preview-frame" src={api.artifactUrl(a.url)} title={a.fileName} sandbox="allow-scripts" />
+              {preview === a.artifactId && (
+                <div className="preview-holder">
+                  {loadingPreview && <div className="preview-loading">rendering preview…</div>}
+                  {previewError && <div className="preview-loading">{previewError}</div>}
+                  {previewHtml && (
+                    <iframe
+                      className="preview-frame preview-frame-tall"
+                      srcDoc={previewHtml}
+                      title={a.fileName}
+                      sandbox="allow-scripts"
+                    />
+                  )}
+                </div>
               )}
               <div className="artifact-meta">
                 {bytes(a.sizeBytes)} · sha256 {a.sha256.slice(0, 16)}… · {new Date(a.createdAt).toLocaleTimeString()}
               </div>
               <div className="artifact-actions">
-                {previewable && (
-                  <button className="btn-secondary" onClick={() => setPreview(preview === a.artifactId ? null : a.artifactId)}>
-                    {preview === a.artifactId ? 'hide' : 'preview'}
-                  </button>
-                )}
+                <button className="btn-secondary" onClick={() => openPreview(a.artifactId)}>
+                  {preview === a.artifactId ? 'hide' : 'preview'}
+                </button>
                 <a className="btn-primary" href={api.artifactUrl(a.url)} download style={{ textDecoration: 'none' }}>
                   download
                 </a>

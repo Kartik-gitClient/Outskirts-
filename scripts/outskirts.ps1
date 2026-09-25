@@ -31,17 +31,13 @@ function Start-Detached([hashtable]$Svc) {
     return
   }
   $log = Join-Path $LogDir ("{0}.log" -f $Svc.Name)
-  # Win32_Process.Create fully detaches: the caller never waits on inherited handles.
-  $cmd = 'cmd.exe /c ""{0}" {1} > "{2}" 2>&1"' -f $Svc.Exe, $Svc.Args, $log
-  $res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
-    CommandLine      = $cmd
-    CurrentDirectory = $Svc.Cwd
-  }
-  if ($res.ReturnValue -eq 0) {
-    Write-Host ("{0,-12} starting (pid {1}) -> {2}" -f $Svc.Name, $res.ProcessId, $log)
-  } else {
-    Write-Host ("{0,-12} FAILED to start (code {1})" -f $Svc.Name, $res.ReturnValue)
-  }
+  # Start-Process gives the child its OWN hidden console: a Ctrl+C in this
+  # terminal or closing this window can never signal the stack. (Children
+  # spawned via Win32_Process.Create share the caller's console and die
+  # with it.)
+  $cmdLine = '/c ""{0}" {1} > "{2}" 2>&1"' -f $Svc.Exe, $Svc.Args, $log
+  $p = Start-Process -FilePath 'cmd.exe' -ArgumentList $cmdLine -WorkingDirectory $Svc.Cwd -WindowStyle Hidden -PassThru
+  Write-Host ("{0,-12} starting (pid {1}) -> {2}" -f $Svc.Name, $p.Id, $log)
 }
 
 function Stop-Stack([hashtable]$Svc) {
@@ -70,7 +66,17 @@ function Show-Status([hashtable]$Svc) {
 }
 
 switch ($Action) {
-  'up'     { foreach ($s in $Services) { Start-Detached $s } ; Start-Sleep -Seconds 2 ; Write-Host '' ; foreach ($s in $Services) { Show-Status $s } }
+  'up'     {
+    foreach ($s in $Services) { Start-Detached $s }
+    # Services take 5-15s to bind (pnpm + tsx + vite); poll instead of a fixed 2s sleep.
+    $deadline = (Get-Date).AddSeconds(40)
+    do {
+      Start-Sleep -Seconds 2
+      $pending = @($Services | Where-Object { -not (Get-PortOwner $_.Port) })
+    } while ($pending.Count -gt 0 -and (Get-Date) -lt $deadline)
+    Write-Host ''
+    foreach ($s in $Services) { Show-Status $s }
+  }
   'down'   { foreach ($s in $Services) { Stop-Stack $s } }
   'status' { foreach ($s in $Services) { Show-Status $s } }
 }

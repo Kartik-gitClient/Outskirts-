@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import type { Notification, HealthReport } from '../lib/api.js';
 import type { Thread } from '../lib/useWorkbench.js';
 
@@ -13,63 +13,61 @@ interface SidebarProps {
   onModeChange: (mode: 'SOVEREIGN' | 'ASSIST') => void;
   providers: HealthReport[];
   onUseConnector: (prompt: string) => void;
-  onConfigureNim: (key: string) => Promise<void> | void;
-  nimModel: string;
 }
 
 const CONNECTORS: Array<{
   id: string;
   name: string;
+  glyph: string;
   desc: string;
-  tools: string;
   prompt: string;
   provider: string;
 }> = [
   {
     id: 'engineering',
     name: 'Engineering Calculations',
+    glyph: '∑',
     desc: 'Darcy-Weisbach, ISA-75.01 valve sizing, compressor head',
-    tools: 'pipe-calc-plugin · engineering-svc',
     prompt: 'Run a Darcy-Weisbach pressure drop check for line P-101A',
     provider: 'engineering',
   },
   {
     id: 'knowledge',
     name: 'Sovereign Knowledge',
+    glyph: '▦',
     desc: 'Hybrid BM25 + vector retrieval with freshness decay',
-    tools: 'knowledge-base · BM25 · RRF',
     prompt: 'What is the minimum allowable wall thickness for CDU piping?',
     provider: 'knowledge',
   },
   {
     id: 'perception',
     name: 'P&ID Perception',
+    glyph: '⌖',
     desc: 'Vector symbol detection, tag OCR, GraphRAG topology',
-    tools: 'perception-svc · pid-graph',
     prompt: 'Trace the isolation boundary for pump P-101A on the P&ID',
     provider: 'perception',
   },
   {
     id: 'twin',
     name: 'Digital Twin',
+    glyph: '◉',
     desc: 'What-if simulation on the virtual plant before field change',
-    tools: 'twin-simulator · engineering-svc',
     prompt: 'Simulate a shutdown of pump P-101A and show affected equipment',
     provider: 'twin',
   },
   {
     id: 'documents',
     name: 'Deliverable Synthesis',
+    glyph: '❐',
     desc: 'Signed .docx, .xlsx and .pptx artifacts with Decision DNA',
-    tools: 'docx · exceljs · pptxgenjs',
     prompt: 'Produce an engineering approval note for Refinery Line P-101A',
     provider: 'documents',
   },
   {
     id: 'sandbox',
     name: 'Micro-Tool Sandbox',
+    glyph: '⌘',
     desc: 'Generated interactive HTML tools in a zero-egress iframe',
-    tools: 'csp default-src none',
     prompt: 'build a hydraulic sizing calculator micro tool',
     provider: 'sandbox',
   },
@@ -86,12 +84,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onModeChange,
   providers,
   onUseConnector,
-  onConfigureNim,
-  nimModel,
 }) => {
-  const [nimKey, setNimKey] = useState('');
-  const [nimSaved, setNimSaved] = useState(false);
-
   const providerHealthy = (id: string): boolean => {
     if (id === 'knowledge' || id === 'twin' || id === 'documents' || id === 'sandbox') return true;
     if (id === 'engineering') return providers.some((p) => p.providerId === 'vllm' || p.healthy);
@@ -144,27 +137,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Connector marketplace */}
         <div className="pane">
           <div className="pane-head">
-            <span>02 / Connectors</span>
+            <span>02 / Marketplace</span>
             <span className="pane-index">skills</span>
           </div>
           <div className="connector-grid">
             {CONNECTORS.map((c) => (
-              <div key={c.id} className="connector" onClick={() => onUseConnector(c.prompt)} role="button" tabIndex={0}>
-                <div className="connector-top">
-                  <span className="connector-name">{c.name}</span>
-                  <span className={`badge ${providerHealthy(c.provider) ? '' : 'neutral'}`}>
-                    {providerHealthy(c.provider) ? 'ready' : 'idle'}
-                  </span>
-                </div>
-                <div className="connector-desc">{c.desc}</div>
-                <div className="connector-tools">{c.tools}</div>
+              <div
+                key={c.id}
+                className={`connector-tile ${providerHealthy(c.provider) ? '' : 'idle'}`}
+                onClick={() => onUseConnector(c.prompt)}
+                role="button"
+                tabIndex={0}
+                title={`${c.name} — ${c.desc}`}
+              >
+                <span className="connector-glyph">{c.glyph}</span>
+                <span className="connector-tile-name">{(c.name.split(' ')[0] ?? c.name).toLowerCase()}</span>
               </div>
             ))}
           </div>
         </div>
 
         {/* Data decay notifications */}
-        <div className="pane">
+        <div className="pane" style={{ borderBottom: 'none' }}>
           <div className="pane-head">
             <span>03 / Notifications</span>
             <span className="pane-index">{notifications.length}</span>
@@ -176,38 +170,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <div className="notif-detail">{n.detail}</div>
             </div>
           ))}
-        </div>
-
-        {/* NIM configuration */}
-        <div className="pane" style={{ borderBottom: 'none' }}>
-          <div className="pane-head">
-            <span>04 / Assist provider</span>
-          </div>
-          <div className="hint" style={{ marginBottom: 8 }}>
-            NVIDIA NIM · {nimModel}
-          </div>
-          <div className="field" style={{ marginBottom: 8 }}>
-            <input
-              type="password"
-              placeholder="NIM_API_KEY"
-              value={nimKey}
-              onChange={(e) => {
-                setNimKey(e.target.value);
-                setNimSaved(false);
-              }}
-            />
-          </div>
-          <button
-            className="btn-secondary"
-            style={{ width: '100%' }}
-            onClick={async () => {
-              await onConfigureNim(nimKey);
-              setNimSaved(true);
-              setNimKey('');
-            }}
-          >
-            {nimSaved ? 'configured' : 'configure provider'}
-          </button>
         </div>
       </div>
 

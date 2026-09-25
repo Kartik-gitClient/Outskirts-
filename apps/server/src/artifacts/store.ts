@@ -15,6 +15,8 @@ export interface StoredArtifact {
   sizeBytes: number;
   mimeType: string;
   createdAt: string;
+  /** Absolute on-disk path; only populated by getArtifact (not part of API rows). */
+  filePath?: string;
 }
 
 const ARTIFACT_ROOT =
@@ -82,5 +84,23 @@ export class ArtifactStore {
       mimeType: String(row['mime_type']),
       createdAt: String(row['created_at']),
     }));
+  }
+
+  /** Fetch a single stored artifact record (with its on-disk path). */
+  public getArtifact(artifactId: string): StoredArtifact | undefined {
+    const row = this.store.getArtifact(artifactId);
+    if (!row) return undefined;
+    return {
+      artifactId: String(row['artifact_id']),
+      taskId: String(row['task_id']),
+      artifactType: String(row['artifact_type']),
+      fileName: String(row['file_name']),
+      url: `/artifacts/${String(row['task_id'])}/${encodeURIComponent(String(row['file_name']))}`,
+      sha256: String(row['sha256']),
+      sizeBytes: Number(row['size_bytes']),
+      mimeType: String(row['mime_type']),
+      createdAt: String(row['created_at']),
+      filePath: String(row['file_path']),
+    };
   }
 }

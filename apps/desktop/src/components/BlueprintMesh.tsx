@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, type BlueprintData } from '../lib/api.js';
+import { api, type BlueprintData, type BlueprintOps } from '../lib/api.js';
 
 interface BNode {
   id: string;
@@ -33,13 +33,16 @@ function uid(p: string): string {
   return `${p}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+/** Animated glyphs: each symbol class moves according to its nature. */
 function glyph(cls: string): React.ReactElement {
   switch (cls) {
     case 'centrifugal-pump':
       return (
         <g>
           <circle cx="0" cy="0" r="9" fill="none" stroke="currentColor" strokeWidth="1.2" />
-          <polygon points="-5,-6 7,0 -5,6" fill="none" stroke="currentColor" strokeWidth="1.2" />
+          <g className="anim-spin" style={{ transformOrigin: '0px 0px' }}>
+            <polygon points="-5,-6 7,0 -5,6" fill="none" stroke="currentColor" strokeWidth="1.2" />
+          </g>
         </g>
       );
     case 'gate-valve':
@@ -47,6 +50,7 @@ function glyph(cls: string): React.ReactElement {
         <g>
           <polygon points="-10,-6 0,0 -10,6" fill="currentColor" opacity="0.7" />
           <polygon points="10,-6 0,0 10,6" fill="currentColor" opacity="0.7" />
+          <line className="anim-stroke" x1="0" y1="-9" x2="0" y2="9" stroke="currentColor" strokeWidth="1.4" />
         </g>
       );
     case 'flow-control-valve':
@@ -54,20 +58,22 @@ function glyph(cls: string): React.ReactElement {
         <g>
           <polygon points="-10,-6 0,0 -10,6" fill="none" stroke="currentColor" strokeWidth="1.2" />
           <polygon points="10,-6 0,0 10,6" fill="none" stroke="currentColor" strokeWidth="1.2" />
-          <path d="M -6,-8 Q 0,-16 6,-8 Z" fill="none" stroke="currentColor" strokeWidth="1.2" />
+          <path className="anim-bob" d="M -6,-8 Q 0,-16 6,-8 Z" fill="none" stroke="currentColor" strokeWidth="1.2" />
         </g>
       );
     case 'flow-transmitter':
       return (
         <g>
           <circle cx="0" cy="0" r="9" fill="none" stroke="currentColor" strokeWidth="1.2" />
-          <line x1="-9" y1="0" x2="9" y2="0" stroke="currentColor" strokeWidth="1" />
+          <line className="anim-needle" x1="-9" y1="0" x2="9" y2="0" stroke="currentColor" strokeWidth="1" />
         </g>
       );
     default:
+      // pressure vessel: breathing level bubble
       return (
         <g>
           <rect x="-8" y="-12" width="16" height="24" rx="6" fill="none" stroke="currentColor" strokeWidth="1.2" />
+          <rect className="anim-level" x="-7" y="-2" width="14" height="13" rx="4" fill="currentColor" opacity="0.35" />
         </g>
       );
   }
@@ -78,11 +84,14 @@ export const BlueprintMesh: React.FC = () => {
   const [edges, setEdges] = useState<BEdge[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [connectFrom, setConnectFrom] = useState<string | null>(null);
-  const [transform, setTransform] = useState({ x: 40, y: 20, k: 0.75 });
+  const [transform, setTransform] = useState({ x: 24, y: 16, k: 1.2 });
   const [answer, setAnswer] = useState<{ answer: string; path: string[] } | null>(null);
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('loaded from drawing');
   const [dirty, setDirty] = useState(false);
+  const [buildMode, setBuildMode] = useState(false);
+  const [building, setBuilding] = useState(false);
+  const [aiReply, setAiReply] = useState<string | null>(null);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const panRef = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
@@ -106,14 +115,35 @@ export const BlueprintMesh: React.FC = () => {
     (async () => {
       try {
         const saved = await api.blueprintLoad(DOC_ID);
-        if (saved.source === 'user-edited' && saved.blueprint) {
-          const bp = saved.blueprint as { nodes: BNode[]; edges: BEdge[] };
-          if (Array.isArray(bp.nodes) && bp.nodes.length > 0) {
-            setNodes(bp.nodes);
-            setEdges(bp.edges ?? []);
-            setStatus('loaded from local DB');
-            return;
+        const bp = saved.blueprint as { nodes: BNode[]; edges: BEdge[] } | undefined;
+        if (saved.source === 'user-edited' && bp && Array.isArray(bp.nodes) && bp.nodes.length > 0) {
+          // Top up the saved graph so the mesh always shows at least 4 nodes
+          // spanning 4 different symbol classes.
+          const generated = await api.blueprint(12);
+          let nodes: BNode[] = [...bp.nodes];
+          const have = new Set(nodes.map((n) => n.symbolClass));
+          const ids = new Set(nodes.map((n) => n.id));
+          for (const g of generated.nodes) {
+            if (nodes.length >= 4 && have.size >= 4) break;
+            if (ids.has(g.tagNumber) || have.has(g.symbolClass)) continue;
+            nodes = [
+              ...nodes,
+              {
+                id: g.tagNumber,
+                tagNumber: g.tagNumber,
+                symbolClass: g.symbolClass,
+                x: g.bbox.x,
+                y: g.bbox.y,
+                ...(g.service ? { service: g.service } : {}),
+              },
+            ];
+            have.add(g.symbolClass);
+            ids.add(g.tagNumber);
           }
+          setNodes(nodes);
+          setEdges(bp.edges ?? []);
+          setStatus('loaded from local DB');
+          return;
         }
         const generated = await api.blueprint(12);
         loadGenerated(generated);
@@ -139,16 +169,24 @@ export const BlueprintMesh: React.FC = () => {
     [transform],
   );
 
-  const onWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault();
-    const rect = svgRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
-    setTransform((t) => {
-      const k = Math.min(2.4, Math.max(0.25, t.k * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
-      return { k, x: mx - ((mx - t.x) * k) / t.k, y: my - ((my - t.y) * k) / t.k };
-    });
+  // Native non-passive wheel listener: the browser must not swallow the event
+  // (React's synthetic onWheel is passive, so preventDefault there is ignored
+  // and Ctrl+wheel would zoom the whole app instead of the mesh).
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent): void => {
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      setTransform((t) => {
+        const k = Math.min(2.4, Math.max(0.25, t.k * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
+        return { k, x: mx - ((mx - t.x) * k) / t.k, y: my - ((my - t.y) * k) / t.k };
+      });
+    };
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
   }, []);
 
   const onPointerDown = useCallback(
@@ -232,6 +270,90 @@ export const BlueprintMesh: React.FC = () => {
     setStatus(`saved to local DB · ${new Date().toLocaleTimeString()}`);
   }, [nodes, edges]);
 
+  // --- AI construction -----------------------------------------------------
+
+  /** Place a new node near its connection anchor, or in a free spiral slot. */
+  const placeNewNode = useCallback(
+    (anchorTag: string | undefined, existing: BNode[], index: number): { x: number; y: number } => {
+      if (anchorTag) {
+        const anchor = existing.find((n) => n.tagNumber === anchorTag || n.id === anchorTag);
+        if (anchor) {
+          const side = index % 2 === 0 ? 1 : -1;
+          return { x: anchor.x + 150 * side, y: anchor.y + (index > 1 ? 70 : 0) };
+        }
+      }
+      const n = existing.length;
+      const ring = Math.floor(n / 6);
+      const angle = (n % 6) * (Math.PI / 3);
+      return { x: 480 + Math.cos(angle) * (180 + ring * 120), y: 260 + Math.sin(angle) * (120 + ring * 90) };
+    },
+    [],
+  );
+
+  const runBuild = useCallback(async () => {
+    const prompt = query.trim();
+    if (!prompt || building) return;
+    setBuilding(true);
+    setAiReply(null);
+    try {
+      const { ops } = await api.blueprintAi(
+        prompt,
+        nodes.map((n) => ({ id: n.id, tagNumber: n.tagNumber, symbolClass: n.symbolClass })),
+        edges.map((e) => ({ from: e.from, to: e.to })),
+      );
+
+      setNodes((prev) => {
+        let next = [...prev];
+        const byTag = new Map(next.map((n) => [n.tagNumber, n]));
+
+        // removals first
+        if (ops.removeNodes.length > 0) {
+          const kill = new Set(ops.removeNodes);
+          next = next.filter((n) => !kill.has(n.tagNumber));
+          for (const t of ops.removeNodes) byTag.delete(t);
+        }
+
+        // additions, positioned near their future anchor
+        let i = 0;
+        for (const add of ops.addNodes) {
+          if (byTag.has(add.tag ?? '')) continue;
+          const anchor =
+            ops.connect.find((c) => c.from === add.tag || c.to === add.tag)?.from ??
+            ops.connect.find((c) => c.from === add.tag || c.to === add.tag)?.to;
+          const pos = placeNewNode(anchor, next, i++);
+          const tag = add.tag ?? uid('N');
+          const node: BNode = { id: tag, tagNumber: tag, symbolClass: add.symbolClass, x: pos.x, y: pos.y };
+          next.push(node);
+          byTag.set(tag, node);
+        }
+
+        // connections between known tags
+        setEdges((prevEdges) => {
+          const nextEdges = [...prevEdges];
+          for (const c of ops.connect) {
+            const from = byTag.get(c.from) ?? next.find((n) => n.id === c.from);
+            const to = byTag.get(c.to) ?? next.find((n) => n.id === c.to);
+            if (!from || !to) continue;
+            if (nextEdges.some((e) => e.from === from.tagNumber && e.to === to.tagNumber)) continue;
+            nextEdges.push({ id: uid('e'), from: from.tagNumber, to: to.tagNumber, lineNumber: 'AI' });
+          }
+          return nextEdges;
+        });
+
+        return next;
+      });
+
+      setDirty(true);
+      setAiReply(`${ops.source === 'llm' ? 'ai' : 'parser'} · ${ops.reply}`);
+      setStatus(`${ops.addNodes.length} added · ${ops.connect.length} connected`);
+      setQuery('');
+    } catch (e) {
+      setAiReply(`build failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBuilding(false);
+    }
+  }, [query, building, nodes, edges, placeNewNode]);
+
   // --- client-side graph query ---------------------------------------------
 
   const trace = useCallback(
@@ -300,6 +422,7 @@ export const BlueprintMesh: React.FC = () => {
     const result = trace(query);
     setAnswer(result);
     setSelected(null);
+    setQuery('');
   }, [query, trace]);
 
   const highlight = useMemo(() => new Set(answer?.path ?? []), [answer]);
@@ -354,7 +477,6 @@ export const BlueprintMesh: React.FC = () => {
             ref={svgRef}
             viewBox="0 0 1000 560"
             style={{ width: '100%', height: '100%', cursor: panRef.current ? 'grabbing' : 'default', touchAction: 'none' }}
-            onWheel={onWheel}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
@@ -379,11 +501,23 @@ export const BlueprintMesh: React.FC = () => {
                 const d = edgePath(from, to);
                 return (
                   <g key={e.id}>
+                    {/* thick dark casing + bright core = readable heavy line */}
                     <path
                       d={d}
                       fill="none"
-                      stroke={lit ? '#00ff66' : '#262626'}
-                      strokeWidth={lit ? 2 : 1.5}
+                      stroke={lit ? '#0a3a1e' : '#1c1c1c'}
+                      strokeWidth={lit ? 9 : 7}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <path
+                      d={d}
+                      fill="none"
+                      stroke={lit ? '#00ff66' : '#3a3a3a'}
+                      strokeWidth={lit ? 4 : 2.5}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className={lit ? 'flow-line flow-lit' : 'flow-line'}
                       markerEnd={lit ? 'url(#bp-arrow)' : undefined}
                       onClick={(ev) => {
                         ev.stopPropagation();
@@ -393,8 +527,8 @@ export const BlueprintMesh: React.FC = () => {
                       style={{ cursor: 'pointer' }}
                     />
                     {lit && (
-                      <circle r="3" fill="#00ff66">
-                        <animateMotion dur="1.6s" repeatCount="indefinite" path={d} />
+                      <circle r="4" fill="#00ff66">
+                        <animateMotion dur="1.4s" repeatCount="indefinite" path={d} />
                       </circle>
                     )}
                   </g>
@@ -453,6 +587,14 @@ export const BlueprintMesh: React.FC = () => {
           </div>
         )}
 
+        {aiReply && (
+          <div style={{ borderTop: '1px solid var(--border)', padding: '10px 16px', background: 'var(--surface-1)' }}>
+            <div className="hint" style={{ color: 'var(--ok)' }}>
+              {aiReply}
+            </div>
+          </div>
+        )}
+
         {answer && (
           <div style={{ borderTop: '1px solid var(--border)', padding: '10px 16px', background: 'var(--surface-1)' }}>
             <div className="hint" style={{ color: 'var(--text)' }}>
@@ -471,24 +613,45 @@ export const BlueprintMesh: React.FC = () => {
         )}
 
         <div className="blueprint-composer">
+          <div className="mode-toggle" style={{ marginBottom: 8, width: '100%' }}>
+            <button className={!buildMode ? 'active' : ''} onClick={() => setBuildMode(false)}>
+              trace mode — query the graph
+            </button>
+            <button className={buildMode ? 'active' : ''} onClick={() => setBuildMode(true)}>
+              ai build — describe what to construct
+            </button>
+          </div>
           <div className="composer-box">
             <textarea
               rows={1}
-              placeholder="mesh query — e.g. what feeds V-102? · isolation valves for P-101A"
+              placeholder={
+                buildMode
+                  ? 'ai build — e.g. "join V-102 with a vessel and use P-101A to start the flow" · "add two pumps and connect them to V-102"'
+                  : 'mesh query — e.g. what feeds V-102? · isolation valves for P-101A'
+              }
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
-                  runQuery();
+                  if (buildMode) void runBuild();
+                  else runQuery();
                 }
               }}
             />
-            <button className="btn-primary" onClick={runQuery} disabled={!query.trim()}>
-              trace
+            <button
+              className="btn-primary"
+              onClick={() => (buildMode ? void runBuild() : runQuery())}
+              disabled={!query.trim() || building}
+            >
+              {building ? 'building…' : buildMode ? 'build' : 'trace'}
             </button>
           </div>
-          <div className="composer-hint">traces resolve against this editable graph — save persists to the local DB</div>
+          <div className="composer-hint">
+            {buildMode
+              ? 'the ai plans node placements and connections from your description — ops are audited on the gateway'
+              : 'traces resolve against this editable graph — save persists to the local DB'}
+          </div>
         </div>
       </div>
     </section>

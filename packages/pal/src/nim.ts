@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type {
   ChatRequest,
   HealthReport,
@@ -8,6 +11,66 @@ import type {
   TrustBoundary,
 } from '@outskirts/schemas';
 import type { ProviderAdapter, ChatResponse, StreamChunk } from './adapter.js';
+
+/** Local, gitignored persistence for the operator-configured key so the
+ *  admin-console configuration survives gateway restarts. */
+const NIM_CONFIG_FILE =
+  process.env.OUTSKIRTS_NIM_CONFIG ??
+  path.join(fileURLToPath(new URL('../../../apps/server/data', import.meta.url)), 'nim-config.json');
+
+function loadPersistedKey(): string {
+  try {
+    const raw = fs.readFileSync(NIM_CONFIG_FILE, 'utf-8');
+    const parsed = JSON.parse(raw) as { apiKey?: string; baseUrl?: string };
+    return parsed.apiKey?.trim() ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function persistConfig(config: { apiKey?: string; baseUrl?: string }): void {
+  try {
+    fs.mkdirSync(path.dirname(NIM_CONFIG_FILE), { recursive: true });
+    const existing = (() => {
+      try {
+        return JSON.parse(fs.readFileSync(NIM_CONFIG_FILE, 'utf-8')) as Record<string, string>;
+      } catch {
+        return {};
+      }
+    })();
+    fs.writeFileSync(NIM_CONFIG_FILE, JSON.stringify({ ...existing, ...config }, null, 2));
+  } catch {
+    /* persistence is best-effort; env var still works */
+  }
+}
+
+/**
+ * Reasoning-tuned NIM models (e.g. nemotron-*-reasoning) sometimes prefix the
+ * final answer with a verbose thinking block. Strip a detected preamble and
+ * keep the answer; clean models pass through untouched.
+ */
+export function stripReasoningPreamble(text: string): string {
+  const head = text.slice(0, 160).toLowerCase();
+  const looksLikeReasoning =
+    head.includes('thinking process') || head.startsWith('thinking:') || head.startsWith('reasoning:');
+  if (!looksLikeReasoning) return text;
+
+  const paragraphs = text
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+  if (paragraphs.length > 1) {
+    // final answer is conventionally the last block, or the last block that
+    // does not look like a numbered reasoning step
+    for (let i = paragraphs.length - 1; i >= 0; i--) {
+      const p = paragraphs[i]!;
+      if (!/^\d+[.)]\s/.test(p) && !/^here'?s a thinking process/i.test(p)) {
+        return p;
+      }
+    }
+  }
+  return text;
+}
 
 export interface NimAdapterOptions {
   baseUrl?: string;
@@ -42,7 +105,8 @@ export class NimAdapter implements ProviderAdapter {
 
   constructor(options?: NimAdapterOptions) {
     this.baseUrl = options?.baseUrl ?? process.env.NIM_BASE_URL ?? 'https://integrate.api.nvidia.com/v1';
-    this.apiKey = options?.apiKey ?? process.env.NIM_API_KEY ?? process.env.OPENAI_API_KEY ?? '';
+    this.apiKey =
+      options?.apiKey ?? process.env.NIM_API_KEY ?? process.env.OPENAI_API_KEY ?? loadPersistedKey();
     this.locality = options?.locality ?? 'internet';
     this.trustBoundary = options?.trustBoundary ?? 'outside-perimeter';
     this.endpointHost = new URL(this.baseUrl).host;
@@ -59,12 +123,18 @@ export class NimAdapter implements ProviderAdapter {
     }));
 
     const payload: Record<string, unknown> = {
-      model: model.modelId === 'external-assist-frontier' ? 'meta/llama-3.1-70b-instruct' : model.modelId,
+      model: model.modelId === 'external-assist-frontier' ? 'google/gemma-4-31b-it' : model.modelId,
       messages,
       temperature: req.temperature ?? 0.2,
       max_tokens: req.maxTokens ?? 2048,
       stream: false,
     };
+
+    // Reasoning-tuned NIM models otherwise burn the token budget on a visible
+    // "thinking process" and truncate the actual answer.
+    if (/nemotron|lightning|reason/i.test(model.modelId)) {
+      payload.chat_template_kwargs = { enable_thinking: false };
+    }
 
     if (req.seed !== null) {
       payload.seed = req.seed;
@@ -101,9 +171,10 @@ export class NimAdapter implements ProviderAdapter {
 
     const choice = json.choices?.[0];
     const latencyMs = performance.now() - start;
+    const raw = choice?.message?.content ?? '';
 
     return {
-      content: choice?.message?.content ?? '',
+      content: stripReasoningPreamble(raw),
       role: 'assistant',
       tokensIn: json.usage?.prompt_tokens ?? 0,
       tokensOut: json.usage?.completion_tokens ?? 0,
@@ -195,26 +266,59 @@ export class NimAdapter implements ProviderAdapter {
         detail: 'NIM_API_KEY not set',
       };
     }
-    return {
-      providerId: this.id,
-      healthy: true,
-      checkedAt,
-      residentModels: [],
-      devicePlacement: 'unknown',
-      detail: 'remote (outside perimeter; ASSIST mode only)',
-    };
+    // Actually probe the endpoint so an invalid key reports offline honestly.
+    try {
+      const res = await this.fetch(`${this.baseUrl}/models`, {
+        headers: { Authorization: `Bearer ${this.apiKey}` },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) {
+        return {
+          providerId: this.id,
+          healthy: false,
+          checkedAt,
+          residentModels: [],
+          devicePlacement: 'unknown',
+          detail: `endpoint responded ${res.status} — check NIM_API_KEY`,
+        };
+      }
+      const json = (await res.json()) as { data?: Array<{ id?: string }> };
+      const models = (json.data ?? [])
+        .map((m) => String(m.id ?? ''))
+        .filter((id) => id.length > 0)
+        .slice(0, 50);
+      return {
+        providerId: this.id,
+        healthy: true,
+        checkedAt,
+        residentModels: models,
+        devicePlacement: 'mixed',
+        detail: 'live · cloud (outside perimeter; ASSIST mode only)',
+      };
+    } catch (err: unknown) {
+      return {
+        providerId: this.id,
+        healthy: false,
+        checkedAt,
+        residentModels: [],
+        devicePlacement: 'unknown',
+        detail: `unreachable: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
   }
 
   public isConfigured(): boolean {
     return this.apiKey.length > 0;
   }
 
-  /** Configure at runtime (e.g. from the admin console) without a restart. */
+  /** Configure at runtime (e.g. from the admin console) without a restart.
+   *  Persisted locally so the configuration survives gateway restarts. */
   public configure(options: { apiKey?: string; baseUrl?: string }): void {
     if (options.apiKey?.trim()) this.apiKey = options.apiKey.trim();
     if (options.baseUrl?.trim()) {
       this.baseUrl = options.baseUrl.trim();
       this.endpointHost = new URL(this.baseUrl).host;
     }
+    persistConfig(options);
   }
 }

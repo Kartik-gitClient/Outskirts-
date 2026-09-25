@@ -1,6 +1,64 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, type Equipment, type EquipmentSim, type TwinResult } from '../lib/api.js';
+import { api, type Equipment, type EquipmentSim, type SimAiExplanation, type TwinResult } from '../lib/api.js';
 import { Schematic } from './Schematic.js';
+import { Splitter, clampWidth, storedWidth, storeWidth } from './Splitter.js';
+
+/** Compact fact sheet sent to the gateway for grounded AI analysis. */
+function factsOf(result: EquipmentSim) {
+  return {
+    tag: result.equipment.tag,
+    equipmentType: result.equipment.equipmentType,
+    category: result.category,
+    manufacturer: result.equipment.manufacturer,
+    ...(result.equipment.service ? { service: result.equipment.service } : {}),
+    inputs: result.inputs,
+    outputs: result.outputs.map((o) => ({ name: o.name, value: o.value, unit: o.unit })),
+    warnings: result.warnings,
+    correlation: result.correlation,
+    source: result.source,
+  };
+}
+
+function AiCard({
+  title,
+  explanation,
+  loading,
+  error,
+  onClose,
+}: {
+  title: string;
+  explanation: SimAiExplanation | null;
+  loading: boolean;
+  error: string | null;
+  onClose: () => void;
+}): React.ReactElement {
+  return (
+    <div className="ai-card">
+      <div className="ai-card-head">
+        <span className="ai-card-title">{title}</span>
+        {explanation && (
+          <span className={`badge ${explanation.source === 'llm' ? '' : 'neutral'}`}>
+            {explanation.source === 'llm' ? explanation.model : 'fallback'}
+          </span>
+        )}
+        <button className="btn-ghost" style={{ marginLeft: 'auto' }} onClick={onClose}>
+          x
+        </button>
+      </div>
+      {loading && <div className="hint" style={{ color: 'var(--ok)' }}>agent reasoning…</div>}
+      {error && <div className="warn-box">{error}</div>}
+      {explanation && (
+        <div className="ai-card-body">
+          {explanation.text.split('\n').filter(Boolean).map((line, i) => (
+            <div key={i} className="ai-line">
+              {line.replace(/^-\s*/, '')}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface Control {
   key: string;
@@ -178,7 +236,7 @@ const SCENARIOS = [
   { id: 'equipment_replacement', label: 'Replacement', blurb: 'Swap nameplate values before purchase' },
 ] as const;
 
-export const MachineSimulation: React.FC = () => {
+export const MachineSimulation: React.FC<{ aiReady?: boolean }> = ({ aiReady = false }) => {
   const [tab, setTab] = useState<'equipment' | 'plant'>('equipment');
 
   return (
@@ -197,12 +255,12 @@ export const MachineSimulation: React.FC = () => {
           virtual plant · no field device actuated
         </span>
       </div>
-      {tab === 'equipment' ? <EquipmentSim /> : <PlantScenarios />}
+      {tab === 'equipment' ? <EquipmentSim aiReady={aiReady} /> : <PlantScenarios />}
     </section>
   );
 };
 
-const EquipmentSim: React.FC = () => {
+const EquipmentSim: React.FC<{ aiReady?: boolean }> = ({ aiReady = false }) => {
   const [equipment, setEquipment] = useState<Equipment[]>([]);
   const [category, setCategory] = useState<string>('all');
   const [query, setQuery] = useState('');
@@ -212,6 +270,52 @@ const EquipmentSim: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<number[]>([]);
+  const [listW, setListW] = useState(() => storedWidth('outskirts.sim.list', 240));
+  const [outW, setOutW] = useState(() => storedWidth('outskirts.sim.output', 340));
+
+  // AI interpretation & diagnosis (grounded on the last run's computed values)
+  const [explain, setExplain] = useState<SimAiExplanation | null>(null);
+  const [explainBusy, setExplainBusy] = useState(false);
+  const [explainErr, setExplainErr] = useState<string | null>(null);
+  const [diagnosis, setDiagnosis] = useState<SimAiExplanation | null>(null);
+  const [diagnoseBusy, setDiagnoseBusy] = useState(false);
+  const [diagnoseErr, setDiagnoseErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    // new run invalidates prior AI analysis
+    setExplain(null);
+    setExplainErr(null);
+    setDiagnosis(null);
+    setDiagnoseErr(null);
+  }, [result]);
+
+  const runExplain = useCallback(async () => {
+    if (!result || explainBusy) return;
+    setExplain(null);
+    setExplainErr(null);
+    setExplainBusy(true);
+    try {
+      setExplain(await api.simInterpret(factsOf(result)));
+    } catch (e) {
+      setExplainErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExplainBusy(false);
+    }
+  }, [result, explainBusy]);
+
+  const runDiagnose = useCallback(async () => {
+    if (!result || diagnoseBusy) return;
+    setDiagnosis(null);
+    setDiagnoseErr(null);
+    setDiagnoseBusy(true);
+    try {
+      setDiagnosis(await api.simDiagnose(factsOf(result)));
+    } catch (e) {
+      setDiagnoseErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDiagnoseBusy(false);
+    }
+  }, [result, diagnoseBusy]);
 
   useEffect(() => {
     api
@@ -263,9 +367,25 @@ const EquipmentSim: React.FC = () => {
       (query === '' || `${e.tag} ${e.equipmentType} ${e.manufacturer} ${e.service ?? ''}`.toLowerCase().includes(query.toLowerCase())),
   );
 
+  const resizeList = useCallback((dx: number) => {
+    setListW((w) => {
+      const next = clampWidth(w + dx, 180, 400);
+      storeWidth('outskirts.sim.list', next);
+      return next;
+    });
+  }, []);
+
+  const resizeOut = useCallback((dx: number) => {
+    setOutW((w) => {
+      const next = clampWidth(w - dx, 260, 520);
+      storeWidth('outskirts.sim.output', next);
+      return next;
+    });
+  }, []);
+
   return (
     <div className="sim-layout">
-      <div className="sim-list">
+      <div className="sim-list" style={{ width: listW, flexShrink: 0 }}>
         <div className="pane">
           <div className="field" style={{ marginBottom: 8 }}>
             <input type="text" placeholder="search tag / type / vendor" value={query} onChange={(e) => setQuery(e.target.value)} />
@@ -286,6 +406,8 @@ const EquipmentSim: React.FC = () => {
         ))}
       </div>
 
+      <Splitter onDelta={resizeList} />
+
       <div className="sim-stage">
         {selected && (
           <>
@@ -297,7 +419,6 @@ const EquipmentSim: React.FC = () => {
                     <span
                       key={t.tag}
                       className={`badge ${t.status === 'warn' ? 'warn' : ''}`}
-                      style={{ height: 24 }}
                       title="live tag overlay"
                     >
                       {t.tag} {t.value}
@@ -356,13 +477,41 @@ const EquipmentSim: React.FC = () => {
         )}
       </div>
 
-      <div className="inspector-scroll" style={{ borderLeft: '1px solid var(--border)' }}>
+      <Splitter onDelta={resizeOut} />
+
+      <div className="inspector-scroll sim-output" style={{ width: outW, flexShrink: 0, borderLeft: '1px solid var(--border)' }}>
         <div className="pane-head" style={{ padding: '4px 0 10px' }}>
           <span>Live output</span>
         </div>
         {!result && <div className="inspector-empty">Run the simulation to compute the operating point.</div>}
         {result && (
           <>
+            {/* AI actions on the completed run — only offered when a model is online */}
+            {aiReady && (
+              <div className="sim-ai-actions">
+                <button className="btn-secondary" onClick={() => void runExplain()} disabled={explainBusy}>
+                  {explainBusy ? 'analyzing…' : 'explanation'}
+                </button>
+                {result.warnings.length > 0 && (
+                  <button
+                    className="btn-primary"
+                    style={{ padding: '5px 12px' }}
+                    onClick={() => void runDiagnose()}
+                    disabled={diagnoseBusy}
+                  >
+                    {diagnoseBusy ? 'diagnosing…' : 'diagnose with outskirts agent'}
+                  </button>
+                )}
+              </div>
+            )}
+
+            {explain && <AiCard title="run explanation" explanation={explain} loading={explainBusy} error={explainErr} onClose={() => setExplain(null)} />}
+            {explainErr && !explain && <div className="warn-box">{explainErr}</div>}
+            {diagnosis && (
+              <AiCard title="warning diagnosis" explanation={diagnosis} loading={diagnoseBusy} error={diagnoseErr} onClose={() => setDiagnosis(null)} />
+            )}
+            {diagnoseErr && !diagnosis && <div className="warn-box">{diagnoseErr}</div>}
+
             {result.warnings.map((w, i) => (
               <div className="warn-box" key={i}>
                 {w}
@@ -423,6 +572,15 @@ const PlantScenarios: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [delta, setDelta] = useState(2);
   const [target, setTarget] = useState('P-101A');
+  const [outW, setOutW] = useState(() => storedWidth('outskirts.twin.output', 380));
+
+  const resizeOut = useCallback((dx: number) => {
+    setOutW((w) => {
+      const next = clampWidth(w - dx, 280, 560);
+      storeWidth('outskirts.twin.output', next);
+      return next;
+    });
+  }, []);
 
   const run = async (scenario: Record<string, unknown>) => {
     setBusy(true);
@@ -437,7 +595,7 @@ const PlantScenarios: React.FC = () => {
   };
 
   return (
-    <div className="sim-layout" style={{ gridTemplateColumns: 'minmax(0, 1fr) 400px' }}>
+    <div className="sim-layout">
       <div className="sim-stage">
         <div className="pane-head">
           <span>Virtual plant · CDU feed train</span>
@@ -528,7 +686,9 @@ const PlantScenarios: React.FC = () => {
         )}
       </div>
 
-      <div className="inspector-scroll" style={{ borderLeft: '1px solid var(--border)' }}>
+      <Splitter onDelta={resizeOut} />
+
+      <div className="inspector-scroll sim-output" style={{ width: outW, flexShrink: 0, borderLeft: '1px solid var(--border)' }}>
         <div className="pane-head" style={{ padding: '4px 0 10px' }}>
           <span>Findings</span>
         </div>

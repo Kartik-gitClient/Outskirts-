@@ -1,11 +1,13 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { api, type ArtifactInfo, type HealthReport, type Notification } from './lib/api.js';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { api, type ArtifactInfo, type HealthReport, type ModelEntry, type Notification } from './lib/api.js';
 import { useWorkbench } from './lib/useWorkbench.js';
 import { Sidebar } from './components/Sidebar.js';
 import { WorkbenchCenter } from './components/WorkbenchCenter.js';
 import { InspectorPanel } from './components/InspectorPanel.js';
 import { MachineSimulation } from './components/MachineSimulation.js';
 import { BlueprintMesh } from './components/BlueprintMesh.js';
+import { AdminWindow } from './components/AdminWindow.js';
+import { Splitter, clampWidth, storedWidth, storeWidth } from './components/Splitter.js';
 
 type View = 'workbench' | 'machine' | 'blueprint';
 
@@ -16,7 +18,15 @@ export const App: React.FC = () => {
   const [nimModel, setNimModel] = useState('nim');
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [artifacts, setArtifacts] = useState<ArtifactInfo[]>([]);
+  const [adminOpen, setAdminOpen] = useState(false);
+  const [models, setModels] = useState<ModelEntry[]>([]);
+  const [preferredModel, setPreferredModelState] = useState<string | null>(null);
   const modeInitialised = useRef(false);
+
+  // Resizable pane widths (persisted across sessions).
+  const [sidebarW, setSidebarW] = useState(() => storedWidth('outskirts.pane.sidebar', 240));
+  const [inspectorW, setInspectorW] = useState(() => storedWidth('outskirts.pane.inspector', 360));
+  const workspaceRef = useRef<HTMLDivElement>(null);
 
   const wb = useWorkbench();
 
@@ -29,6 +39,13 @@ export const App: React.FC = () => {
         setModeState(p.mode === 'ASSIST' ? 'ASSIST' : 'SOVEREIGN');
         modeInitialised.current = true;
       }
+    } catch {
+      /* gateway offline */
+    }
+    try {
+      const m = await api.models();
+      setModels(m.models);
+      setPreferredModelState(m.preferredModel ?? null);
     } catch {
       /* gateway offline */
     }
@@ -77,9 +94,58 @@ export const App: React.FC = () => {
   const sending = lastAssistant?.status === 'running';
   const criticalCount = notifications.filter((n) => n.severity === 'critical').length;
 
+  // Artifacts of THIS thread only — the inspector is chat-scoped.
+  const threadArtifacts = useMemo(() => {
+    const seen = new Set<string>();
+    const list: ArtifactInfo[] = [];
+    for (const m of active?.messages ?? []) {
+      for (const a of m.artifacts ?? []) {
+        if (!seen.has(a.artifactId)) {
+          seen.add(a.artifactId);
+          list.push(a);
+        }
+      }
+    }
+    return list;
+  }, [active]);
+
   const gatewayUp = providers.length > 0;
-  const ollamaUp = providers.find((p) => p.providerId === 'ollama')?.healthy ?? false;
-  const nimUp = providers.find((p) => p.providerId === 'nim')?.healthy ?? false;
+
+  // All enabled models are listed in both modes; an outside-perimeter pick
+  // opens the perimeter (the gateway switches to ASSIST and audits it).
+  const chatModels = useMemo(() => models.filter((m) => m.status === 'enabled'), [models]);
+
+  const onlineProviders = useMemo(
+    () => providers.filter((p) => p.healthy).map((p) => p.providerId),
+    [providers],
+  );
+
+  const pickModel = useCallback(async (modelId: string | null) => {
+    try {
+      const r = await api.setPreferredModel(modelId ?? '');
+      setPreferredModelState(r.preferredModel ?? null);
+      // picking an outside-perimeter model opens the perimeter — sync the toggle
+      if (r.mode === 'ASSIST' || r.mode === 'SOVEREIGN') setModeState(r.mode);
+    } catch {
+      /* keep current selection */
+    }
+  }, []);
+
+  const resizeSidebar = useCallback((dx: number) => {
+    setSidebarW((w) => {
+      const next = clampWidth(w + dx, 200, 420);
+      storeWidth('outskirts.pane.sidebar', next);
+      return next;
+    });
+  }, []);
+
+  const resizeInspector = useCallback((dx: number) => {
+    setInspectorW((w) => {
+      const next = clampWidth(w - dx, 280, 560);
+      storeWidth('outskirts.pane.inspector', next);
+      return next;
+    });
+  }, []);
 
   return (
     <div className="app-shell">
@@ -102,67 +168,94 @@ export const App: React.FC = () => {
         </div>
 
         <div className="topbar-status">
-          <span className="status-chip">
+          {criticalCount > 0 && (
+            <span className={`badge bad`} title="data decay alerts">
+              {criticalCount} decay
+            </span>
+          )}
+          <button className="admin-btn" onClick={() => setAdminOpen(true)} title="gateway, providers, perimeter mode">
             <span className={`dot ${gatewayUp ? '' : 'off'}`} />
-            gateway
-          </span>
-          <span className="status-chip" title="local sovereign inference (Ollama)">
-            <span className={`dot ${ollamaUp ? '' : 'off'}`} />
-            local llm
-          </span>
-          <span className="status-chip" title="NVIDIA NIM assist provider (outside perimeter)">
-            <span className={`dot ${nimUp ? '' : 'off'}`} />
-            nim assist
-          </span>
-          <span className={`status-chip`} title="perimeter mode">
-            <span className={`dot ${mode === 'SOVEREIGN' ? '' : 'warn'}`} />
-            {mode}
-          </span>
+            admin
+          </button>
         </div>
       </header>
 
-      <div className={`workspace ${view === 'workbench' ? 'with-inspector' : ''}`}>
-        <Sidebar
-          threads={wb.threads}
-          {...(wb.activeThreadId ? { activeThreadId: wb.activeThreadId } : {})}
-          onSelectThread={wb.setActiveThreadId}
-          onNewThread={wb.newThread}
-          onDeleteThread={wb.deleteThread}
-          notifications={notifications}
-          mode={mode}
-          onModeChange={(m) => void changeMode(m)}
-          providers={providers}
-          onUseConnector={(prompt) => {
-            setView('workbench');
-            void wb.send(prompt);
-          }}
-          onConfigureNim={configureNim}
-          nimModel={nimModel}
-        />
+      <div
+        ref={workspaceRef}
+        className={`workspace ${view === 'workbench' ? 'with-inspector' : ''}`}
+      >
+        <div className="pane-col pane-side" style={{ width: sidebarW, flexShrink: 0 }}>
+          <Sidebar
+            threads={wb.threads}
+            {...(wb.activeThreadId ? { activeThreadId: wb.activeThreadId } : {})}
+            onSelectThread={wb.setActiveThreadId}
+            onNewThread={wb.newThread}
+            onDeleteThread={wb.deleteThread}
+            notifications={notifications}
+            mode={mode}
+            onModeChange={(m) => void changeMode(m)}
+            providers={providers}
+            onUseConnector={(prompt) => {
+              setView('workbench');
+              void wb.send(prompt);
+            }}
+          />
+        </div>
 
         {view === 'workbench' && (
           <>
-            <WorkbenchCenter
-              title={active?.title ?? 'New session'}
-              status={sending ? 'executing pipeline' : `${active?.messages.length ?? 0} messages`}
-              messages={active?.messages ?? []}
-              onSend={(text) => void wb.send(text)}
-              sending={sending}
-              {...(lastAssistant?.taskId
-                ? { onCancel: () => void api.cancelTask(lastAssistant.taskId!).catch(() => undefined) }
-                : {})}
-            />
-            <InspectorPanel
-              {...(lastAssistant ? { message: lastAssistant } : {})}
-              allArtifacts={artifacts}
-              notificationsCount={criticalCount}
-            />
+            <Splitter onDelta={resizeSidebar} />
+            <div className="pane-col" style={{ flex: 1, minWidth: 0 }}>
+              <WorkbenchCenter
+                title={active?.title ?? 'New session'}
+                status={sending ? 'executing pipeline' : `${active?.messages.length ?? 0} messages`}
+                messages={active?.messages ?? []}
+                onSend={(text) => void wb.send(text)}
+                sending={sending}
+                {...(lastAssistant?.taskId
+                  ? { onCancel: () => void api.cancelTask(lastAssistant.taskId!).catch(() => undefined) }
+                  : {})}
+                availableModels={chatModels}
+                onlineProviders={onlineProviders}
+                preferredModel={preferredModel}
+                onPickModel={(m) => void pickModel(m)}
+              />
+            </div>
+            <Splitter onDelta={resizeInspector} />
+            <div className="pane-col" style={{ width: inspectorW, flexShrink: 0 }}>
+              <InspectorPanel
+                {...(lastAssistant ? { message: lastAssistant } : {})}
+                allArtifacts={threadArtifacts}
+                notificationsCount={criticalCount}
+              />
+            </div>
           </>
         )}
 
-        {view === 'machine' && <MachineSimulation />}
-        {view === 'blueprint' && <BlueprintMesh />}
+        {view === 'machine' && (
+          <>
+            <Splitter onDelta={resizeSidebar} />
+            <MachineSimulation aiReady={providers.some((p) => p.healthy)} />
+          </>
+        )}
+        {view === 'blueprint' && (
+          <>
+            <Splitter onDelta={resizeSidebar} />
+            <BlueprintMesh />
+          </>
+        )}
       </div>
+
+      {adminOpen && (
+        <AdminWindow
+          onClose={() => setAdminOpen(false)}
+          mode={mode}
+          onModeChange={(m) => void changeMode(m)}
+          providers={providers}
+          nimModel={nimModel}
+          onConfigureNim={configureNim}
+        />
+      )}
     </div>
   );
 };

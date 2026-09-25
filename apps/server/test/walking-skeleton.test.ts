@@ -83,7 +83,7 @@ describe('Phase P1: Walking Skeleton & Flagship Acceptance Suite', () => {
       }
     });
 
-    const result = await ctx.executor.executeTask(taskId, 'Cancel test goal', {
+    const result = await ctx.executor.executeTask(taskId, 'Piping inspection approval cancel test', {
       mode: 'SOVEREIGN',
       token,
     });

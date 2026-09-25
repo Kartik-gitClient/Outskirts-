@@ -10,12 +10,41 @@ export type WorkflowIntent =
   | 'PRESENTATION_DECK'
   | 'DIGITAL_TWIN'
   | 'KNOWLEDGE_QA'
+  | 'VISUALIZATION'
   | 'CUSTOM_GOAL';
 
 export interface PlanGenerationResult {
   intent: WorkflowIntent;
   plan: Plan;
-  suggestedArtifactType: 'docx' | 'microtool' | 'drawing' | 'xlsx' | 'pptx' | 'text';
+  suggestedArtifactType: 'docx' | 'microtool' | 'drawing' | 'xlsx' | 'pptx' | 'html' | 'text';
+}
+
+/** Greetings / small talk: answered conversationally, never via retrieval. */
+export function isSmallTalk(goal: string): boolean {
+  const t = goal.trim().toLowerCase().replace(/[!.?,]+$/, '').trim();
+  if (t.length > 60) return false;
+
+  // Pure filler replies: "ok", "cool", "thanks", "sure", "bye"...
+  if (/^(ok|okay|k|cool|nice|great|thanks|thank you|ty|bye|goodbye|good night|see you|got it|sure|yes|no|yep|nope)$/.test(t)) {
+    return true;
+  }
+
+  // Greeting prefix — only small talk if the rest is just pleasantries,
+  // never when a real instruction follows ("hi make me an excel file").
+  const greeting = /^(hi|hey|hello|yo|sup|hiya|greetings|good (morning|afternoon|evening)|namaste|hola)\b/.exec(t);
+  if (greeting) {
+    const rest = t.slice(greeting[0].length).trim();
+    if (rest.length === 0) return true;
+    if (/^(there|all|everyone|buddy|bro|dear|team|folks)?\s*$/.test(rest)) return true;
+    if (/^(how are you|how's it going|how are things|what's up|whats up|you good)\b/.test(rest)) return true;
+    return false;
+  }
+
+  if (t.length < 30 && /\b(how are you|how's it going|how are things|what's up|whats up|you good)\b/.test(t)) return true;
+  if (/^(ok|okay|cool|nice|great|thanks|thank you)\b/.test(t) && t.length <= 25 && !/\b(make|create|build|generate|produce|run|show|pull|extract|visuali[sz]e|simulate|trace|add|open|start)\b/.test(t)) {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -32,20 +61,27 @@ export class DynamicAgentPlanner {
   ): Promise<PlanGenerationResult> {
     const lower = goal.toLowerCase();
 
-    // 1. Classify intent
-    let intent: WorkflowIntent = 'REPORT_APPROVAL';
-    let suggestedArtifactType: PlanGenerationResult['suggestedArtifactType'] = 'docx';
+    // 1. Classify intent. CUSTOM_GOAL is the fallback: only an explicit
+    // approval/report phrasing may enter the canned inspection journey.
+    let intent: WorkflowIntent = 'CUSTOM_GOAL';
+    let suggestedArtifactType: PlanGenerationResult['suggestedArtifactType'] = 'text';
 
     // A question with no action verb is answering, not authoring. Without this,
     // "what is the minimum wall thickness?" ran the full approval-note pipeline.
     const isQuestion =
       /^(what|how|why|which|who|where|when|is|are|do|does|can)\b/.test(lower.trim()) || lower.trim().endsWith('?');
     const isAction =
-      /\b(produce|make|generate|create|build|write|compile|analyse|analyze|scan|run|simulate|draft|prepare|trace)\b/.test(
+      /\b(produce|make|generate|create|build|write|compile|analyse|analyze|scan|run|simulate|draft|prepare|trace|visualize|visualise|plot|chart|graph|show)\b/.test(
         lower,
       );
 
     if (
+      /\b(visuali[sz]e|visualisation|visualization|chart|graph|plot|dashboard)\b/.test(lower) ||
+      (/\b(show|draw)\b/.test(lower) && /\b(data|trend|comparison|distribution)\b/.test(lower))
+    ) {
+      intent = 'VISUALIZATION';
+      suggestedArtifactType = 'html';
+    } else if (
       lower.includes('digital twin') ||
       lower.includes('simulate') ||
       lower.includes('simulation') ||
@@ -84,12 +120,10 @@ export class DynamicAgentPlanner {
       intent = 'REPORT_APPROVAL';
       suggestedArtifactType = 'docx';
     } else if (
-      lower.includes('micro') ||
-      lower.includes('tool') ||
-      lower.includes('calculator') ||
-      lower.includes('flange') ||
-      lower.includes('app') ||
-      lower.includes('code')
+      /micro-?tool|calculator|flange|sandbox tool|html tool|web app|mini app|single-page app/.test(lower) ||
+      (/\btools?\b/.test(lower) && /\b(build|make|create|generate|design|interactive)\b/.test(lower)) ||
+      (/\bapp\b/.test(lower) && /\b(build|make|create|generate|interactive|calculator|tool)\b/.test(lower)) ||
+      /\bwrite code\b|\bgenerate code\b|\bcode for\b/.test(lower)
     ) {
       intent = 'MICROTOOL_CODE';
       suggestedArtifactType = 'microtool';
@@ -103,6 +137,40 @@ export class DynamicAgentPlanner {
 
     // 2. Build DAG steps based on intent
     let steps: PlanStep[] = [];
+
+    // Small talk gets a minimal 2-step plan — it must never run retrieval
+    // or render a 4-step engineering pipeline for "hi".
+    if (intent === 'KNOWLEDGE_QA' || intent === 'CUSTOM_GOAL') {
+      if (isSmallTalk(goal)) {
+        steps = [
+          {
+            stepId: 'step-1-greet',
+            kind: 'document',
+            description: 'Compose conversational response',
+            dependsOn: [],
+            plugins: [],
+            status: 'pending',
+          },
+          {
+            stepId: 'step-2-record',
+            kind: 'document',
+            description: 'Record interaction in Merkle Audit Chain',
+            dependsOn: ['step-1-greet'],
+            plugins: [],
+            status: 'pending',
+          },
+        ];
+        return {
+          intent,
+          plan: {
+            taskId,
+            recipeId: `recipe-${intent.toLowerCase()}`,
+            steps,
+          },
+          suggestedArtifactType: 'text',
+        };
+      }
+    }
 
     switch (intent) {
       case 'REPORT_APPROVAL':
@@ -371,6 +439,44 @@ export class DynamicAgentPlanner {
             stepId: 'step-4-record',
             kind: 'document',
             description: 'Attach watermark provenance and commit Decision DNA record',
+            dependsOn: ['step-3-render'],
+            plugins: [],
+            outputSchemaRef: 'DecisionDna',
+            status: 'pending',
+          },
+        ];
+        break;
+
+      case 'VISUALIZATION':
+        steps = [
+          {
+            stepId: 'step-1-source',
+            kind: 'retrieve',
+            description: 'Resolve the dataset to visualize (previous run output or live workspace store)',
+            dependsOn: [],
+            plugins: [],
+            status: 'pending',
+          },
+          {
+            stepId: 'step-2-series',
+            kind: 'calculation',
+            description: 'Compute chart series and aggregations from the resolved data rows',
+            dependsOn: ['step-1-source'],
+            plugins: [],
+            status: 'pending',
+          },
+          {
+            stepId: 'step-3-render',
+            kind: 'document',
+            description: 'Render interactive chart dashboard artifact (self-contained HTML/SVG)',
+            dependsOn: ['step-2-series'],
+            plugins: [],
+            status: 'pending',
+          },
+          {
+            stepId: 'step-4-record',
+            kind: 'document',
+            description: 'Sign artifact hash and record Decision DNA',
             dependsOn: ['step-3-render'],
             plugins: [],
             outputSchemaRef: 'DecisionDna',

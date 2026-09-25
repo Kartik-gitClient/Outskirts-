@@ -35,6 +35,8 @@ const TIMEOUT = Symbol('llm-timeout');
  * a slow or absent model can never fail a task.
  */
 export class LlmClient {
+  private preferredModel: string | null = null;
+
   constructor(
     private readonly pal: PAL,
     private readonly planModels: (taskType: TaskType) => string[],
@@ -44,7 +46,26 @@ export class LlmClient {
     return this.pal.getRegistry().getAll().some((m) => m.status === 'enabled');
   }
 
+  /** Operator-selected model override (model picker). null = automatic chain. */
+  public setPreferredModel(modelId: string | null): void {
+    this.preferredModel = modelId;
+  }
+
+  public getPreferredModel(): string | null {
+    return this.preferredModel;
+  }
+
   public async generate(req: LlmRequest): Promise<LlmResponse> {
+    // Operator override first; falls through to the chain on failure so a
+    // dead manual pick can never hard-fail a task.
+    if (this.preferredModel) {
+      const entry = this.pal.getRegistry().get(this.preferredModel);
+      if (entry) {
+        const res = await this.tryGenerate(req, entry);
+        if (res.ok) return res;
+      }
+    }
+
     const modelIds = this.planModels(req.taskType);
     const errors: string[] = [];
 

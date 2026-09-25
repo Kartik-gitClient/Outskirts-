@@ -26,6 +26,7 @@ import type { TimelineManager } from '../gateway/timeline.js';
 import { generateC2paManifest, type C2paManifest } from '../provenance/provenance-stub.js';
 import { LlmClient } from './llm.js';
 import { CONTRACT_REGISTER, type ContractRow } from '../data/workspace.js';
+import { EQUIPMENT_CATALOG, categoryOf, type EquipmentRecord } from '../data/equipment.js';
 import {
   runTwinScenario,
   TWIN_COMPONENTS,
@@ -41,12 +42,13 @@ import {
   renderPptx,
   renderText,
   renderHtml,
+  type ChartSpec,
   type DocSection,
   type XlsxSheet,
   type PptxSlide,
 } from '../artifacts/render.js';
 
-import { DynamicAgentPlanner } from './planner.js';
+import { DynamicAgentPlanner, isSmallTalk } from './planner.js';
 
 export interface ExecutorOptions {
   pal: PAL;
@@ -73,10 +75,20 @@ export interface PipelineResult {
   stepsCompleted: string[];
 }
 
+/** A tabular dataset produced or consumed by a task, reusable by follow-ups. */
+export interface TaskDataset {
+  source: string;
+  label: string;
+  columns: string[];
+  rows: Array<Record<string, string | number>>;
+}
+
 export class AgentPipelineExecutor {
   private planner: DynamicAgentPlanner;
   private llm?: LlmClient;
   private emittedArtifacts: StoredArtifact[] = [];
+  /** Datasets produced by recent tasks, keyed by taskId, for context-aware follow-ups. */
+  private readonly taskDatasets = new Map<string, TaskDataset>();
 
   constructor(private opts: ExecutorOptions) {
     this.planner = new DynamicAgentPlanner(opts.pal);
@@ -97,6 +109,7 @@ export class AgentPipelineExecutor {
     options?: {
       mode?: 'SOVEREIGN' | 'ASSIST';
       token?: CancellationToken;
+      contextTaskId?: string;
     },
   ): Promise<PipelineResult> {
     const mode = options?.mode ?? 'SOVEREIGN';
@@ -347,20 +360,19 @@ export class AgentPipelineExecutor {
         completedSteps.push('step-5-summary');
       } else if (intent === 'SPREADSHEET_EXCEL') {
         // ---------------------------------------------------------------------
-        // Journey 4: DB-backed spreadsheet generation
+        // Journey 4: DB-backed spreadsheet generation over the dataset the
+        // operator actually asked for (equipment catalog, contracts, or the
+        // previous run's data when the goal references "this data").
         // ---------------------------------------------------------------------
         token.throwIfCancelled();
+        const dataset = this.resolveDataset(goal, options?.contextTaskId);
+
         await this.runStep(taskId, plan, 'step-1-intake', async () => {
-          const contracts =
-            this.opts.workspace?.getDataset<ContractRow[]>('mrpl-contracts') ?? CONTRACT_REGISTER;
-          stepResults['contracts'] = contracts;
-          stepResults['step-1-intake'] = {
-            source: this.opts.workspace ? 'sqlite:mrpl-contracts' : 'seed',
-            rows: contracts.length,
-          };
+          stepResults['dataset'] = dataset;
+          stepResults['step-1-intake'] = { source: dataset.source, rows: dataset.rows.length };
           this.opts.auditChain.append(
             'file.op',
-            { dataset: 'mrpl-contracts', rows: contracts.length },
+            { dataset: dataset.source, rows: dataset.rows.length, columns: dataset.columns.length },
             { taskId, stepId: 'step-1-intake' },
           );
         });
@@ -368,17 +380,12 @@ export class AgentPipelineExecutor {
 
         token.throwIfCancelled();
         await this.runStep(taskId, plan, 'step-2-calc', async () => {
-          const contracts = (stepResults['contracts'] as ContractRow[]) ?? [];
-          const summary = {
-            totalContracts: contracts.length,
-            totalValueInrCr: Number(contracts.reduce((s, c) => s + c.valueInrCr, 0).toFixed(2)),
-            departments: Array.from(new Set(contracts.map((c) => c.department))),
-            activeCount: contracts.filter((c) => c.status === 'Active').length,
-          };
+          const summary = summarizeDataset(dataset);
           stepResults['step-2-calc'] = summary;
+          this.taskDatasets.set(taskId, dataset);
           this.opts.auditChain.append(
             'tool.call',
-            { tool: 'contract_aggregation', summary },
+            { tool: 'dataset-aggregation', source: dataset.source, groups: summary.groups.length },
             { taskId, stepId: 'step-2-calc' },
           );
         });
@@ -386,23 +393,103 @@ export class AgentPipelineExecutor {
 
         token.throwIfCancelled();
         await this.runStep(taskId, plan, 'step-3-render', async () => {
-          const contracts = (stepResults['contracts'] as ContractRow[]) ?? [];
-          const summary = stepResults['step-2-calc'] as {
-            totalValueInrCr: number;
-            totalContracts: number;
-            activeCount: number;
-          };
-          const sheets = await this.buildWorkbook(taskId, goal, contracts, summary);
+          const summary = stepResults['step-2-calc'] as ReturnType<typeof summarizeDataset>;
+          const sheets = await this.buildDatasetWorkbook(taskId, goal, dataset, summary);
           const stored = this.persistArtifact(
             taskId,
             'workbook',
-            await renderXlsx({ title: `mrpl-contract-register-${taskId}`, sheets }),
+            await renderXlsx({
+              title: `${dataset.label}-${taskId}`,
+              sheets,
+              chart: {
+                title: `${dataset.label} — ${titleize(summary.groupColumn)}${summary.numericColumn ? ` (total ${titleize(summary.numericColumn)})` : ' (row count)'}`,
+                ...(summary.numericColumn ? { unit: titleize(summary.numericColumn) } : {}),
+                bars: summary.groups.slice(0, 12).map((g) => ({
+                  label: g.label,
+                  value: summary.numericColumn ? Number((g.numericSum ?? 0).toFixed(2)) : g.count,
+                })),
+              },
+            }),
           );
-          draftContent = `# MRPL Contract Master Register\nGenerated workbook with ${contracts.length} contracts across ${sheets.length} sheet(s). Total portfolio value INR ${summary.totalValueInrCr} Cr.`;
+          draftContent = [
+            `# ${dataset.label} Workbook`,
+            '',
+            `Generated from \`${dataset.source}\` — ${dataset.rows.length} rows, ${dataset.columns.length} columns, ${sheets.length} sheet(s).`,
+            '',
+            '## Aggregations',
+            ...summary.groups.slice(0, 12).map((g) => `- ${g.label}: ${g.count} rows${g.numericSum !== undefined ? ` · ${summary.numericColumn} total ${Number(g.numericSum.toFixed(2))}` : ''}`),
+          ].join('\n');
           this.opts.timeline.emit(taskId, {
             type: 'artifact.ready',
             artifactId: stored?.artifactId ?? `art-${taskId}`,
             artifactType: 'xlsx',
+            path: stored?.url ?? '',
+          });
+          stepResults['step-3-render'] = { artifact: stored };
+        });
+        completedSteps.push('step-3-render');
+
+        token.throwIfCancelled();
+        await this.runStep(taskId, plan, 'step-4-record', async () => {
+          dna = this.buildSimpleDna(taskId, goal, plan, mode, seqLow, draftContent);
+          this.opts.timeline.emit(taskId, {
+            type: 'task.complete',
+            dnaId: dna.dnaId,
+            artifactIds: this.emittedArtifacts.map((a) => a.artifactId),
+          });
+          stepResults['step-4-record'] = dna;
+        });
+        completedSteps.push('step-4-record');
+      } else if (intent === 'VISUALIZATION') {
+        // ---------------------------------------------------------------------
+        // Journey 4b: Real visualization of actual data — the previous run's
+        // dataset (conversation context) or the live workspace store.
+        // ---------------------------------------------------------------------
+        token.throwIfCancelled();
+        const dataset = this.resolveDataset(goal, options?.contextTaskId);
+
+        await this.runStep(taskId, plan, 'step-1-source', async () => {
+          stepResults['dataset'] = dataset;
+          stepResults['step-1-source'] = { source: dataset.source, rows: dataset.rows.length };
+          this.opts.auditChain.append(
+            'file.op',
+            { action: 'visualization-source', source: dataset.source, rows: dataset.rows.length },
+            { taskId, stepId: 'step-1-source' },
+          );
+        });
+        completedSteps.push('step-1-source');
+
+        token.throwIfCancelled();
+        await this.runStep(taskId, plan, 'step-2-series', async () => {
+          const summary = summarizeDataset(dataset);
+          stepResults['step-2-series'] = summary;
+          this.taskDatasets.set(taskId, dataset);
+          this.opts.auditChain.append(
+            'tool.call',
+            { tool: 'chart-series', series: summary.groups.length, measure: summary.numericColumn ?? 'count' },
+            { taskId, stepId: 'step-2-series' },
+          );
+        });
+        completedSteps.push('step-2-series');
+
+        token.throwIfCancelled();
+        await this.runStep(taskId, plan, 'step-3-render', async () => {
+          const summary = stepResults['step-2-series'] as ReturnType<typeof summarizeDataset>;
+          const html = buildChartHtml(dataset, summary, goal);
+          const stored = this.persistArtifact(taskId, 'chart-dashboard', renderHtml({ title: `chart-${dataset.label}-${taskId}`, html }));
+          draftContent = [
+            `# Visualization — ${dataset.label}`,
+            '',
+            `Charted \`${dataset.source}\` (${dataset.rows.length} rows) grouped by **${summary.groupColumn}**, measure: **${summary.numericColumn ?? 'row count'}**.`,
+            '',
+            ...summary.groups.slice(0, 10).map((g) => `- ${g.label}: ${g.count}${g.numericSum !== undefined ? ` · ${Number(g.numericSum.toFixed(2))}` : ''}`),
+            '',
+            'Open the artifact preview to see the interactive chart.',
+          ].join('\n');
+          this.opts.timeline.emit(taskId, {
+            type: 'artifact.ready',
+            artifactId: stored?.artifactId ?? `art-${taskId}`,
+            artifactType: 'html',
             path: stored?.url ?? '',
           });
           stepResults['step-3-render'] = { artifact: stored };
@@ -425,8 +512,9 @@ export class AgentPipelineExecutor {
         // Journey 5: Executive presentation deck
         // ---------------------------------------------------------------------
         token.throwIfCancelled();
+        const deckDataset = this.resolveDataset(goal, options?.contextTaskId);
         await this.runStep(taskId, plan, 'step-1-brief', async () => {
-          stepResults['step-1-brief'] = await this.buildDeckPlan(taskId, goal);
+          stepResults['step-1-brief'] = await this.buildDeckPlan(taskId, goal, deckDataset);
         });
         completedSteps.push('step-1-brief');
 
@@ -435,7 +523,7 @@ export class AgentPipelineExecutor {
           const brief = stepResults['step-1-brief'] as { slides: PptxSlide[] };
           this.opts.auditChain.append(
             'pal.call',
-            { action: 'slide-synthesis', slides: brief.slides.length },
+            { action: 'slide-synthesis', slides: brief.slides.length, source: deckDataset.source },
             { taskId, stepId: 'step-2-slides' },
           );
           stepResults['step-2-slides'] = { slides: brief.slides };
@@ -444,13 +532,30 @@ export class AgentPipelineExecutor {
 
         token.throwIfCancelled();
         await this.runStep(taskId, plan, 'step-3-render', async () => {
-          const brief = stepResults['step-1-brief'] as { title: string; subtitle?: string; slides: PptxSlide[] };
+          const brief = stepResults['step-1-brief'] as {
+            title: string;
+            subtitle?: string;
+            slides: PptxSlide[];
+            chart?: ChartSpec;
+          };
           const stored = this.persistArtifact(
             taskId,
             'deck',
-            await renderPptx({ title: brief.title, subtitle: brief.subtitle, slides: brief.slides }),
+            await renderPptx({
+              title: brief.title,
+              subtitle: brief.subtitle,
+              slides: brief.slides,
+              ...(brief.chart ? { chart: brief.chart } : {}),
+            }),
           );
-          draftContent = `# ${brief.title}\nGenerated ${brief.slides.length}-slide executive deck.`;
+          draftContent = [
+            `# ${brief.title}`,
+            '',
+            `Generated ${brief.slides.length + (brief.chart ? 1 : 0)}-slide executive deck from \`${deckDataset.source}\` (${deckDataset.rows.length} rows).`,
+            '',
+            ...(brief.chart ? brief.chart.bars.slice(0, 8).map((b) => `- ${b.label}: ${b.value}`) : []),
+          ].join('\n');
+          this.taskDatasets.set(taskId, deckDataset);
           this.opts.timeline.emit(taskId, {
             type: 'artifact.ready',
             artifactId: stored?.artifactId ?? `art-${taskId}`,
@@ -575,6 +680,13 @@ export class AgentPipelineExecutor {
                 { label: 'Safety verdict', value: r.safetyVerdict.toUpperCase() },
               ],
               sections,
+              chart: {
+                title: `Simulated state — ${r.scenario.type}`,
+                bars: r.deltas.slice(0, 10).map((d) => ({
+                  label: d.metric,
+                  value: Number(d.simulated.toFixed(2)),
+                })),
+              },
               signature: {
                 name: 'agent-digital-twin-01',
                 role: 'Virtual Plant Simulation Agent',
@@ -623,6 +735,26 @@ export class AgentPipelineExecutor {
         // Journey 6: Grounded knowledge question answering
         // ---------------------------------------------------------------------
         token.throwIfCancelled();
+        // Small talk is answered conversationally — never runs retrieval and
+        // never dumps governing-document chunks at "hi".
+        if (isSmallTalk(goal)) {
+          await this.runStep(taskId, plan, 'step-1-greet', async () => {
+            draftContent = await this.answerSmallTalk(taskId, goal);
+            stepResults['step-1-greet'] = { smallTalk: true };
+          });
+          completedSteps.push('step-1-greet');
+
+          await this.runStep(taskId, plan, 'step-2-record', async () => {
+            dna = this.buildSimpleDna(taskId, goal, plan, mode, seqLow, draftContent);
+            this.opts.timeline.emit(taskId, {
+              type: 'task.complete',
+              dnaId: dna.dnaId,
+              artifactIds: this.emittedArtifacts.map((a) => a.artifactId),
+            });
+            stepResults['step-2-record'] = dna;
+          });
+          completedSteps.push('step-2-record');
+        } else {
         let context = '';
         await this.runStep(taskId, plan, 'step-1-analyze', async () => {
           if (this.opts.knowledge) {
@@ -679,6 +811,7 @@ export class AgentPipelineExecutor {
           stepResults['step-4-record'] = dna;
         });
         completedSteps.push('step-4-record');
+        }
       } else {
         // ---------------------------------------------------------------------
         // Journey 1 / Flagship: Refinery Inspection & Approval Pipeline
@@ -933,6 +1066,9 @@ export class AgentPipelineExecutor {
         });
 
         const sections = markdownToSections(draftContent);
+        const extract = stepResults['step-2-extract'] as
+          | { finding?: { measuredValue?: number; limitValue?: number }; corrosionRate?: number; remainingLifeYears?: number }
+          | undefined;
         const stored = this.persistArtifact(
           taskId,
           'approval-note',
@@ -945,6 +1081,16 @@ export class AgentPipelineExecutor {
               { label: 'Manifest', value: c2paManifest.manifestId },
             ],
             sections,
+            chart: {
+              title: 'Wall thickness integrity (mm)',
+              unit: 'mm',
+              bars: [
+                { label: 'Measured (UT)', value: extract?.finding?.measuredValue ?? 4.8 },
+                { label: 'Minimum allowable', value: extract?.finding?.limitValue ?? 4.2 },
+                { label: 'Nominal initial', value: 6.0 },
+                { label: 'Remaining life', value: extract?.remainingLifeYears ?? 5.0 },
+              ],
+            },
             signature: {
               name: 'agent-engineer-01',
               role: 'Autonomous Engineering Agent',
@@ -1148,7 +1294,7 @@ export class AgentPipelineExecutor {
       system,
       user: `Build an interactive engineering micro-tool for: "${goal}". Self-contained HTML5 with inline CSS and JavaScript.`,
       maxTokens: 2048,
-      timeoutMs: 90000,
+      timeoutMs: 45000,
     });
     if (!res.ok) return undefined;
     const html = res.text.replace(/```html?/gi, '').replace(/```/g, '').trim();
@@ -1193,37 +1339,29 @@ Write the executive summary.`;
     return res.text.trim();
   }
 
-  /** Build the contract workbook; an LLM adds an analysis sheet when available. */
-  private async buildWorkbook(
+  /** Build a workbook over any tabular dataset; an LLM adds an analysis sheet when available. */
+  private async buildDatasetWorkbook(
     taskId: string,
     goal: string,
-    contracts: ContractRow[],
-    summary: { totalValueInrCr: number; totalContracts: number; activeCount: number },
+    dataset: TaskDataset,
+    summary: ReturnType<typeof summarizeDataset>,
   ): Promise<XlsxSheet[]> {
     const sheets: XlsxSheet[] = [
       {
-        name: 'Contract Master',
-        columns: ['Contract ID', 'Vendor', 'Department', 'Scope', 'Value (INR Cr)', 'Start', 'End', 'Obligations', 'Status'],
-        rows: contracts.map((c) => [
-          c.contractId,
-          c.vendor,
-          c.department,
-          c.scope,
-          c.valueInrCr,
-          c.startDate,
-          c.endDate,
-          c.obligations,
-          c.status,
-        ]),
+        name: 'Data',
+        columns: dataset.columns,
+        rows: dataset.rows.map((r) => dataset.columns.map((c) => r[c] ?? '')),
       },
       {
         name: 'Summary',
-        columns: ['Metric', 'Value'],
-        rows: [
-          ['Total contracts', summary.totalContracts],
-          ['Active contracts', summary.activeCount],
-          ['Total portfolio value (INR Cr)', summary.totalValueInrCr],
-        ],
+        columns: summary.numericColumn
+          ? [titleize(summary.groupColumn), 'Rows', `Total ${titleize(summary.numericColumn)}`, 'Average']
+          : [titleize(summary.groupColumn), 'Rows'],
+        rows: summary.groups.map((g) =>
+          summary.numericColumn
+            ? [g.label, g.count, Number((g.numericSum ?? 0).toFixed(2)), Number((g.numericAvg ?? 0).toFixed(2))]
+            : [g.label, g.count],
+        ),
       },
     ];
 
@@ -1232,8 +1370,8 @@ Write the executive summary.`;
         taskId,
         stepId: 'step-2-calc',
         taskType: 'document',
-        system: 'You are a contracts analyst. Return ONLY short plain-text observations, one per line, max 5 lines.',
-        user: `Summarize ${contracts.length} MRPL contracts (total INR ${summary.totalValueInrCr} Cr) for a procurement executive. Goal: ${goal}`,
+        system: 'You are a data analyst. Return ONLY short plain-text observations, one per line, max 5 lines.',
+        user: `Summarize ${dataset.rows.length} rows from "${dataset.label}" (grouped by ${summary.groupColumn}, ${summary.groups.length} groups) for: ${goal}`,
         maxTokens: 200,
         timeoutMs: 45000,
       });
@@ -1251,21 +1389,88 @@ Write the executive summary.`;
     return sheets;
   }
 
-  /** Build the deck outline; LLM-authored when reachable. */
+  /**
+   * Resolve the dataset a goal refers to: an explicit subject (equipment /
+   * contracts), the previous run's data when the goal says "this data", the
+   * most recent dataset otherwise, and the equipment catalog as fallback.
+   */
+  private resolveDataset(goal: string, contextTaskId?: string): TaskDataset {
+    const lower = goal.toLowerCase();
+    const refersToPrevious =
+      /\b(this|that|these|those|it|same)\b.*\b(data|dataset|result|file|workbook|table)\b/.test(lower) ||
+      /\b(previous|last|above)\b/.test(lower);
+
+    const wantsContracts = /\b(contract|vendor|procurement|supplier|purchase order)\b/.test(lower);
+    const wantsEquipment =
+      /\b(equipment|machine|asset|plant|rotate|pump|compressor|vessel|exchanger|turbine|motor|valve|tank|column|boiler|reactor|transformer|instrument)\b/.test(
+        lower,
+      );
+
+    // "visualize this data" / "make an excel of it" -> previous run's dataset
+    if (refersToPrevious || (!wantsContracts && !wantsEquipment)) {
+      const fromContext = contextTaskId ? this.taskDatasets.get(contextTaskId) : undefined;
+      const mostRecent = [...this.taskDatasets.values()].pop();
+      const chosen = fromContext ?? mostRecent;
+      if (chosen && (refersToPrevious || !wantsContracts)) {
+        if (!wantsContracts || refersToPrevious) return chosen;
+      }
+    }
+    if (wantsContracts && !wantsEquipment) return contractsDataset(this.opts.workspace?.getDataset<ContractRow[]>('mrpl-contracts'));
+    return equipmentDataset(this.opts.workspace?.getDataset<EquipmentRecord[]>('equipment-catalog'));
+  }
+
+  /** Build a data-driven deck: real dataset stats, LLM bullets when reachable. */
   private async buildDeckPlan(
     taskId: string,
     goal: string,
-  ): Promise<{ title: string; subtitle: string; slides: PptxSlide[] }> {
-    const fallback: { title: string; subtitle: string; slides: PptxSlide[] } = {
-      title: 'MRPL Monthly Governance Pack',
-      subtitle: 'Sovereign AI Workbench · Decision DNA bound',
-      slides: [
-        { title: 'Portfolio Overview', bullets: ['8 active contracts across 6 departments', 'Total committed value INR 93.35 Cr', 'Two contracts entering renewal window'] },
-        { title: 'Operational Highlights', bullets: ['CDU pump overhaul on schedule', 'DCS migration completed at Area 1', 'HSE audit closure verified'] },
-        { title: 'Risk & Obligations', bullets: ['11 obligations tracked for Instrumentation', 'Substation relay contract expiring FY25', 'No critical overdue obligations'] },
-        { title: 'Audit & Compliance', bullets: ['All decisions committed to Merkle audit chain', 'Freshness policy enforced on governing SOPs', 'C2PA provenance on every deliverable'] },
-      ],
+    dataset: TaskDataset,
+  ): Promise<{ title: string; subtitle: string; slides: PptxSlide[]; chart?: ChartSpec }> {
+    const summary = summarizeDataset(dataset);
+    const measure = summary.numericColumn
+      ? `total ${titleize(summary.numericColumn)}`
+      : 'row count';
+
+    const chart: ChartSpec = {
+      title: `${dataset.label} — ${titleize(summary.groupColumn)} (${measure})`,
+      bars: summary.groups.slice(0, 10).map((g) => ({
+        label: g.label,
+        value: summary.numericColumn ? Number((g.numericSum ?? 0).toFixed(2)) : g.count,
+      })),
     };
+
+    const top = summary.groups[0];
+    const fallbackSlides: PptxSlide[] = [
+      {
+        title: 'Dataset Overview',
+        bullets: [
+          `Source: ${dataset.source}`,
+          `${dataset.rows.length} rows · ${dataset.columns.length} columns · ${summary.groups.length} ${titleize(summary.groupColumn).toLowerCase()} groups`,
+          top ? `Largest group: ${top.label} (${summary.numericColumn ? `${Number((top.numericSum ?? 0).toFixed(2))} ${measure}` : `${top.count} rows`})` : 'No groups resolved',
+        ],
+      },
+      {
+        title: `${titleize(summary.groupColumn)} Breakdown`,
+        bullets: summary.groups
+          .slice(0, 6)
+          .map((g) => `${g.label}: ${summary.numericColumn ? Number((g.numericSum ?? 0).toFixed(2)) : g.count}`),
+      },
+      {
+        title: 'Data Quality & Lineage',
+        bullets: [
+          'Extracted from the sovereign local store (SQLite)',
+          'Aggregations computed deterministically, no external calls',
+          'Every figure traceable to the Merkle audit chain',
+        ],
+      },
+      {
+        title: 'Audit & Compliance',
+        bullets: [
+          'All decisions committed to Merkle audit chain',
+          'Freshness policy enforced on governing SOPs',
+          'C2PA provenance on every deliverable',
+        ],
+      },
+    ];
 
     if (this.llm) {
       const res = await this.llm.generateJson<{ title?: string; slides?: PptxSlide[] }>({
@@ -1273,8 +1478,10 @@ Write the executive summary.`;
         stepId: 'step-1-brief',
         taskType: 'document',
         system:
-          'You generate executive slide decks for an oil refinery. Respond with JSON only: {"title":string,"slides":[{"title":string,"bullets":string[]}]}. Use 3-5 slides, 3-5 bullets each.',
-        user: `Create an executive deck outline for: "${goal}"`,
+          'You generate executive slide decks for an oil refinery from REAL data. Respond with JSON only: {"title":string,"slides":[{"title":string,"bullets":string[]}]}. Use 3-5 slides, 3-5 bullets each. Use ONLY the supplied figures; never invent numbers.',
+        user: `Create an executive deck for: "${goal}".
+Dataset: ${dataset.label} from ${dataset.source}, ${dataset.rows.length} rows.
+Grouped by ${summary.groupColumn}: ${summary.groups.map((g) => `${g.label}=${summary.numericColumn ? Number((g.numericSum ?? 0).toFixed(2)) : g.count}`).join(', ')}.`,
         maxTokens: 700,
         timeoutMs: 60000,
       });
@@ -1284,11 +1491,34 @@ Write the executive summary.`;
           .slice(0, 6)
           .map((s) => ({ title: s.title, bullets: s.bullets.map(String).slice(0, 6) }));
         if (slides.length > 0) {
-          return { title: res.value.title ?? fallback.title, subtitle: fallback.subtitle, slides };
+          return { title: res.value.title ?? `${dataset.label} — Executive Pack`, subtitle: 'Sovereign AI Workbench · Decision DNA bound', slides, chart };
         }
       }
     }
-    return fallback;
+    return {
+      title: `${dataset.label} — Executive Pack`,
+      subtitle: 'Sovereign AI Workbench · Decision DNA bound',
+      slides: fallbackSlides,
+      chart,
+    };
+  }
+
+  /** Greetings and chit-chat: short conversational reply, no retrieval dump. */
+  private async answerSmallTalk(taskId: string, goal: string): Promise<string> {
+    if (this.llm) {
+      const res = await this.llm.generate({
+        taskId,
+        stepId: 'step-2-synthesize',
+        taskType: 'document',
+        system:
+          'You are the Outskirts sovereign AI workbench at an oil refinery. The operator is greeting you or making small talk. Reply in 1-2 short friendly sentences. Briefly mention what you can do (engineering calcs, P&ID analysis, Excel/Word/PowerPoint deliverables, plant simulation) only if it fits naturally. Never list document ids.',
+        user: goal,
+        maxTokens: 120,
+        timeoutMs: 30000,
+      });
+      if (res.ok && res.text.trim()) return res.text.trim();
+    }
+    return 'Workbench online. I can prepare approval notes, equipment registers, P&ID traces, and plant simulations on request.';
   }
 
   /** Answer a knowledge question from retrieved context, with a deterministic fallback. */
@@ -1309,9 +1539,19 @@ Write the executive summary.`;
       if (res.ok && res.text.trim()) return res.text.trim();
     }
     if (context) {
-      return `# Answer\n\nRetrieved from the sovereign knowledge base:\n\n${context}`;
+      const cited = [...context.matchAll(/\[([^\]]+)\]/g)].map((m) => m[1]);
+      const docs = [...new Set(cited)].join(', ');
+      return [
+        '# Response',
+        '',
+        `Retrieved ${context.split('\n').length} relevant passages from the sovereign knowledge base (documents: ${docs || 'see below'}).`,
+        '',
+        '## Governing evidence',
+        '',
+        context,
+      ].join('\n');
     }
-    return '# Answer\n\nNo matching governing document was found in the local knowledge base.';
+    return '# Response\n\nNo matching governing document was found in the local knowledge base.';
   }
 
   private async runStep(
@@ -1344,6 +1584,180 @@ Write the executive summary.`;
       status: 'done',
     });
   }
+}
+
+/** Build the equipment dataset from the DB-backed catalog (real plant data). */
+function equipmentDataset(catalog: EquipmentRecord[] | undefined): TaskDataset {
+  const list = catalog ?? EQUIPMENT_CATALOG;
+  const fixed = ['tag', 'equipmentType', 'category', 'manufacturer', 'model', 'service'];
+  const numericCounts = new Map<string, number>();
+  for (const e of list) {
+    for (const [k, v] of Object.entries(e)) {
+      if (typeof v === 'number' && !fixed.includes(k)) {
+        numericCounts.set(k, (numericCounts.get(k) ?? 0) + 1);
+      }
+    }
+  }
+  const numericCols = [...numericCounts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 8)
+    .map(([k]) => k);
+
+  const columns = [...fixed, ...numericCols];
+  const rows = list.map((e) => {
+    const row: Record<string, string | number> = {
+      tag: e.tag,
+      equipmentType: e.equipmentType,
+      category: categoryOf(e),
+      manufacturer: e.manufacturer,
+      model: e.model ?? '',
+      service: e.service ?? '',
+    };
+    for (const c of numericCols) {
+      const v = (e as unknown as Record<string, unknown>)[c];
+      if (typeof v === 'number') row[c] = v;
+    }
+    return row;
+  });
+  return { source: 'sqlite:equipment-catalog', label: 'Equipment Register', columns, rows };
+}
+
+/** Build the contracts dataset from the DB-backed register. */
+function contractsDataset(contracts: ContractRow[] | undefined): TaskDataset {
+  const list = contracts ?? CONTRACT_REGISTER;
+  const columns = ['contractId', 'vendor', 'department', 'scope', 'valueInrCr', 'startDate', 'endDate', 'obligations', 'status'];
+  const rows = list.map((c) => ({
+    contractId: c.contractId,
+    vendor: c.vendor,
+    department: c.department,
+    scope: c.scope,
+    valueInrCr: c.valueInrCr,
+    startDate: c.startDate,
+    endDate: c.endDate,
+    obligations: c.obligations,
+    status: c.status,
+  }));
+  return { source: 'sqlite:mrpl-contracts', label: 'Contract Register', columns, rows };
+}
+
+export interface DatasetSummary {
+  groupColumn: string;
+  numericColumn: string | null;
+  groups: Array<{ label: string; count: number; numericSum?: number; numericAvg?: number }>;
+}
+
+/** Group rows by a categorical column and aggregate the dominant numeric column. */
+function summarizeDataset(dataset: TaskDataset): DatasetSummary {
+  const catCandidates = ['category', 'department', 'equipmentType', 'status', 'vendor', 'type', 'manufacturer'];
+  const groupColumn =
+    catCandidates.find((c) => dataset.columns.includes(c)) ??
+    dataset.columns.find((c) => typeof dataset.rows[0]?.[c] === 'string') ??
+    dataset.columns[0] ??
+    'row';
+
+  const preferred = ['valueInrCr', 'powerKW', 'powerMW', 'heatDutyMW', 'ratingMVA', 'volumeM3', 'capacityKL', 'flowM3Hr', 'obligations'];
+  const numericColumns = dataset.columns.filter((c) => dataset.rows.some((r) => typeof r[c] === 'number'));
+  const numericColumn = preferred.find((p) => numericColumns.includes(p)) ?? numericColumns[0] ?? null;
+
+  const groupMap = new Map<string, { count: number; sum: number }>();
+  for (const row of dataset.rows) {
+    const key = String(row[groupColumn] ?? 'unknown');
+    const g = groupMap.get(key) ?? { count: 0, sum: 0 };
+    g.count += 1;
+    if (numericColumn) {
+      const v = row[numericColumn];
+      if (typeof v === 'number') g.sum += v;
+    }
+    groupMap.set(key, g);
+  }
+
+  const groups = [...groupMap.entries()]
+    .map(([label, g]) => ({
+      label,
+      count: g.count,
+      ...(numericColumn
+        ? { numericSum: g.sum, numericAvg: g.count > 0 ? g.sum / g.count : 0 }
+        : {}),
+    }))
+    .sort((a, b) => (b.numericSum ?? b.count) - (a.numericSum ?? a.count));
+
+  return { groupColumn, numericColumn, groups };
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function titleize(s: string): string {
+  return s
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** Self-contained dark-theme HTML dashboard: SVG bar chart + data table. */
+function buildChartHtml(dataset: TaskDataset, summary: DatasetSummary, goal: string): string {
+  const measure = summary.numericColumn;
+  const values = summary.groups.map((g) => (measure ? (g.numericSum ?? 0) : g.count));
+  const maxV = Math.max(...values, 1);
+  const n = summary.groups.length;
+  const W = 940;
+  const rowH = 34;
+  const chartH = n * rowH + 30;
+  const labelW = 200;
+  const barMax = W - labelW - 140;
+
+  const bars = summary.groups
+    .map((g, i) => {
+      const v = measure ? (g.numericSum ?? 0) : g.count;
+      const bw = Math.max(2, (v / maxV) * barMax);
+      const y = 14 + i * rowH;
+      return `
+      <text x="${labelW - 10}" y="${y + 14}" text-anchor="end" fill="#94a3b8" font-size="12" font-family="monospace">${escapeHtml(g.label.slice(0, 24))}</text>
+      <rect x="${labelW}" y="${y}" width="${bw.toFixed(1)}" height="22" rx="3" fill="#00ff66" opacity="${0.55 + 0.45 * (v / maxV)}"/>
+      <text x="${labelW + bw + 8}" y="${y + 15}" fill="#e2e8f0" font-size="12" font-family="monospace">${v % 1 === 0 ? v : v.toFixed(2)}${measure ? '' : ' rows'}</text>`;
+    })
+    .join('');
+
+  const tableRows = dataset.rows
+    .slice(0, 60)
+    .map(
+      (r) =>
+        `<tr>${dataset.columns.map((c) => `<td>${escapeHtml(String(r[c] ?? ''))}</td>`).join('')}</tr>`,
+    )
+    .join('');
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>${escapeHtml(dataset.label)} — Visualization</title>
+<style>
+  body { background: #0a0a0a; color: #ededed; font-family: ui-monospace, 'Cascadia Code', monospace; margin: 0; padding: 24px; }
+  h1 { font-size: 18px; letter-spacing: 0.06em; margin: 0 0 4px; }
+  .sub { color: #888; font-size: 11px; margin-bottom: 20px; }
+  .card { border: 1px solid #262626; border-radius: 8px; background: #0f0f0f; padding: 16px; margin-bottom: 20px; }
+  svg { width: 100%; height: auto; display: block; }
+  table { border-collapse: collapse; width: 100%; font-size: 11px; }
+  th { text-align: left; color: #888; text-transform: uppercase; font-size: 9px; letter-spacing: 0.08em; padding: 6px 8px; border-bottom: 1px solid #262626; position: sticky; top: 0; background: #0f0f0f; }
+  td { padding: 5px 8px; border-bottom: 1px solid #1a1a1a; color: #cbd5e1; }
+  tr:hover td { background: #141414; }
+  .scroll { max-height: 420px; overflow: auto; }
+</style>
+</head>
+<body>
+  <h1>${escapeHtml(dataset.label)} — grouped by ${escapeHtml(titleize(summary.groupColumn))}</h1>
+  <div class="sub">source ${escapeHtml(dataset.source)} · ${dataset.rows.length} rows · measure: ${measure ? escapeHtml(titleize(measure)) + ' (total)' : 'row count'} · goal: ${escapeHtml(goal.slice(0, 120))}</div>
+  <div class="card">
+    <svg viewBox="0 0 ${W} ${chartH}" preserveAspectRatio="xMidYMin meet">${bars}</svg>
+  </div>
+  <div class="card scroll">
+    <table>
+      <thead><tr>${dataset.columns.map((c) => `<th>${escapeHtml(titleize(c))}</th>`).join('')}</tr></thead>
+      <tbody>${tableRows}</tbody>
+    </table>
+  </div>
+</body>
+</html>`;
 }
 
 /** Convert the rendered markdown note into structured docx sections. */
