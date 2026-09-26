@@ -1,5 +1,5 @@
 # Outskirts: The Sovereign AI Workbench
-
+## TEAM : PRITHVEDA | PROBLEM STATEMENT : 26117 |  KARTIK KHANDELWAL ( LEADER )  |  TEAM MEMBERS : SARTHAK SHRIVASTAV  | SOURABH SAHU  | PAVANI JAISWAL  | ARCHIT VISHWAKARMA | NISHA KUMARI  |
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](https://www.typescriptlang.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-green.svg)](https://nodejs.org/)
 [![pnpm](https://img.shields.io/badge/pnpm-11.22-orange.svg)](https://pnpm.io/)
@@ -9,6 +9,7 @@
 > **"Sovereignty is enforced by topology, not by monitoring. What cannot reach the network cannot leak."**
 
 Outskirts is a sovereign, self-contained, air-gapped agentic AI workbench engineered for high-stakes industrial environments: oil refineries, nuclear facilities, chemical plants, offshore platforms, and critical utility infrastructure.
+
 
 ---
 
